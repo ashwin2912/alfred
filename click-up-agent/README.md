@@ -2,6 +2,23 @@
 
 Digital butler to help run distributed teams. 
 
+## Architecture
+
+```mermaid
+flowchart LR
+    A[main.py] --> B[ClickUp Fetcher]
+    A --> C[Slack Notifier]
+    B --> D[ClickUp API]
+    C --> E[Slack Webhook]
+    
+    F[ClickUpTask Model] -.-> A
+    
+    style A fill:#e1f5fe
+    style B fill:#fff3e0
+    style C fill:#f1f8e9
+    style F fill:#fce4ec
+```
+
 ## Setup
 
 1. Create a `.env` file based on `.env.example`:
