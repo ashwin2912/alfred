@@ -1,0 +1,14 @@
+[project]
+name = "data-service"
+version = "0.1.0"
+description = "Data service for Alfred - Database models and operations"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "pydantic[email]>=2.0.0",
+    "supabase>=2.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

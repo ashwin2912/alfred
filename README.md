@@ -2,34 +2,42 @@
 
 Digital butler to help run distributed teams through automation and integrations.
 
-## Architecture
-
-```mermaid
-graph TB
-    A[Alfred] --> B[click-up-agent]
-    A --> C[github-agent]
-    
-    B --> D[ClickUp API]
-    B --> E[Slack Webhook]
-    
-    C --> F[GitHub API]
-    C --> G[Daily Reports]
-    
-    style A fill:#e1f5fe
-    style B fill:#f3e5f5
-    style C fill:#e8f5e8
-```
-
 ## Components
 
-### click-up-agent
-Syncs ClickUp task updates to Slack for team notifications.
+### discord-bot
+Discord-first onboarding system with admin approval, automated Google Docs profile creation, and role assignment. Includes ClickUp task management integration.
 
-### github-agent
-Provides natural language interface for GitHub operations and generates daily reports.
+### team-management-system
+Automated ClickUp project setup with AI-powered task assignment based on team member skills and availability.
+
+### shared-services
+Reusable services for Supabase database access, Google Docs/Drive integration, and authentication used across all Alfred components.
 
 ## Setup
 
-Each component has its own setup instructions. See individual README files in:
-- `click-up-agent/README.md`
-- `github-agent/README.md`
+Each component has its own setup instructions. See individual README files:
+- `discord-bot/README.md`
+- `team-management-system/README.md`
+- `shared-services/*/README.md`
+
+## Quick Start
+
+### Discord Bot (Primary Onboarding System)
+```bash
+cd discord-bot
+source .venv/bin/activate
+uv pip install -e .
+cp .env.example .env
+# Configure .env with Discord tokens and Supabase credentials
+python create_admin.py  # First-time admin setup
+./run.sh
+```
+
+### Team Management
+```bash
+cd team-management-system
+uv run setup-project --preview  # Preview project structure
+uv run setup-project            # Create in ClickUp
+```
+
+See `progress.md` for detailed documentation and deployment guides.

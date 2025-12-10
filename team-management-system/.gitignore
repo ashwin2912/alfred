@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables
+.env
+.env.local
+
+# UV lock files
+uv.lock
+
+# Examples and extra documentation
+team_management_system/examples/
+ONBOARDING_ARCHITECTURE.md
+PROJECT_SETUP_GUIDE.md
+QUICKSTART.md
+SUMMARY.md
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store

@@ -1,0 +1,587 @@
+"""Discord bot for team management and ClickUp integration."""
+
+import logging
+import os
+
+import discord
+from discord import app_commands
+from discord.ext import commands
+
+from bot.config import DISCORD_BOT_TOKEN, DISCORD_GUILD_ID
+from bot.onboarding import OnboardingView
+from bot.services import ClickUpService, DocsService, TeamMemberService
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+
+class TeamBot(commands.Bot):
+    """Main bot class for team management."""
+
+    def __init__(self):
+        intents = discord.Intents.default()
+        intents.message_content = True
+        intents.members = True
+
+        super().__init__(command_prefix="!", intents=intents, help_command=None)
+
+        self.team_service = TeamMemberService()
+        self.docs_service = DocsService()
+        self.guild_id = int(DISCORD_GUILD_ID) if DISCORD_GUILD_ID else None
+        self.admin_channel_id = (
+            int(os.getenv("DISCORD_ADMIN_CHANNEL_ID"))
+            if os.getenv("DISCORD_ADMIN_CHANNEL_ID")
+            else None
+        )
+        self.alfred_channel_id = (
+            int(os.getenv("DISCORD_ALFRED_CHANNEL_ID"))
+            if os.getenv("DISCORD_ALFRED_CHANNEL_ID")
+            else None
+        )
+
+    async def setup_hook(self):
+        """Called when the bot is starting up."""
+        # Sync commands globally (enables DMs)
+        await self.tree.sync()
+        logger.info("Synced commands globally (DMs enabled)")
+
+        # Also sync to specific guild for faster updates during development
+        if self.guild_id:
+            guild = discord.Object(id=self.guild_id)
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
+            logger.info(f"Synced commands to guild {self.guild_id}")
+
+    async def on_ready(self):
+        """Called when the bot has successfully connected."""
+        logger.info(f"{self.user} has connected to Discord!")
+        logger.info(f"Bot is in {len(self.guilds)} guilds")
+
+    async def on_member_join(self, member: discord.Member):
+        """Welcome new members in #alfred channel."""
+        logger.info(f"New member joined: {member} ({member.id})")
+
+        # Don't welcome bots
+        if member.bot:
+            return
+
+        # Get alfred channel
+        alfred_channel = (
+            self.get_channel(self.alfred_channel_id) if self.alfred_channel_id else None
+        )
+        if not alfred_channel:
+            logger.error("Alfred channel not configured!")
+            return
+
+        # Check if user is already onboarded
+        existing_member = self.team_service.get_member_by_discord_id(member.id)
+        if existing_member:
+            # User is returning or already set up
+            await alfred_channel.send(
+                f"👋 Welcome back, {member.mention}! Your profile is already set up. Use `/setup` to view your details.",
+                delete_after=30,
+            )
+            return
+
+        # Check if they have a pending onboarding request
+        pending = self.team_service.data_service.get_pending_onboarding_by_discord_id(
+            member.id
+        )
+        if pending:
+            await alfred_channel.send(
+                f"👋 Welcome, {member.mention}! You already have an onboarding request pending approval. An admin will review it soon!",
+                delete_after=30,
+            )
+            return
+
+        # Send welcome message in alfred channel
+        embed = discord.Embed(
+            title="👋 Welcome to the Team!",
+            description=(
+                f"Hi {member.mention}! We're excited to have you join us.\n\n"
+                f"**About Us:**\n"
+                f"We're a collaborative team focused on building great things together. "
+                f"This is Alfred, your AI assistant who will help you get started and stay productive.\n\n"
+                f"**Let's get you onboarded!**"
+            ),
+            color=discord.Color.blue(),
+        )
+
+        embed.add_field(
+            name="🚀 Start Your Onboarding",
+            value=(
+                f"Run this command to begin:\n\n"
+                f"`/start-onboarding`\n\n"
+                f"_(All your responses will be private - only you can see them!)_"
+            ),
+            inline=False,
+        )
+
+        embed.add_field(
+            name="📝 What You'll Provide",
+            value=(
+                "• Your full name\n"
+                "• Work email\n"
+                "• Phone number\n"
+                "• Brief bio with your skills & experience"
+            ),
+            inline=False,
+        )
+
+        embed.add_field(
+            name="⏱️ What Happens Next",
+            value=(
+                "1. You submit your info\n"
+                "2. Admin reviews and approves\n"
+                "3. You get assigned to your team(s)\n"
+                "4. You get access to team channels & resources\n"
+                "5. You can set up ClickUp and other integrations"
+            ),
+            inline=False,
+        )
+
+        embed.set_thumbnail(url=member.display_avatar.url)
+        embed.set_footer(text="Ready to start? Run /start-onboarding above ⬆️")
+
+        await alfred_channel.send(content=member.mention, embed=embed)
+        logger.info(f"Sent welcome message in #alfred for {member}")
+
+
+# Create bot instance
+bot = TeamBot()
+
+
+@bot.tree.command(
+    name="start-onboarding",
+    description="Start your onboarding process - provide your info for admin approval",
+)
+async def start_onboarding(interaction: discord.Interaction):
+    """Start the onboarding flow with a modal form."""
+    # Check if user is already onboarded
+    existing_member = bot.team_service.get_member_by_discord_id(interaction.user.id)
+    if existing_member:
+        await interaction.response.send_message(
+            "✅ You're already onboarded! Use `/setup` to view your profile.",
+            ephemeral=True,
+        )
+        return
+
+    # Check if they have a pending onboarding request
+    pending = bot.team_service.data_service.get_pending_onboarding_by_discord_id(
+        interaction.user.id
+    )
+    if pending:
+        await interaction.response.send_message(
+            f"⚠️ You already have a pending onboarding request (ID: {pending.id}).\n"
+            "Please wait for admin approval.",
+            ephemeral=True,
+        )
+        return
+
+    # Show onboarding modal
+    from bot.onboarding import OnboardingModal
+
+    modal = OnboardingModal(bot.team_service, bot.docs_service)
+    await interaction.response.send_modal(modal)
+
+
+@bot.tree.command(
+    name="setup", description="Check your onboarding status and get setup instructions"
+)
+async def setup(interaction: discord.Interaction):
+    """Check if user profile exists and provide setup instructions."""
+    await interaction.response.defer(ephemeral=True)
+
+    discord_username = f"{interaction.user.name}#{interaction.user.discriminator}"
+    if interaction.user.discriminator == "0":
+        # New username format (no discriminator)
+        discord_username = interaction.user.name
+
+    logger.info(f"Setup command called by {discord_username}")
+
+    # Check if user exists in database
+    member = bot.team_service.get_member_by_discord(discord_username)
+
+    if not member:
+        embed = discord.Embed(
+            title="❌ Profile Not Found",
+            description=(
+                f"I couldn't find a profile for **{discord_username}**.\n\n"
+                "**Next Steps:**\n"
+                "1. Make sure you've completed the onboarding process\n"
+                "2. Verify your Discord username matches what you provided during onboarding\n"
+                "3. Contact an admin if you need help"
+            ),
+            color=discord.Color.red(),
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        return
+
+    # User exists - check ClickUp setup status
+    has_clickup = member.clickup_api_token is not None
+
+    embed = discord.Embed(
+        title="✅ Profile Found",
+        description=f"Welcome, **{member.name}**!",
+        color=discord.Color.green(),
+    )
+
+    embed.add_field(name="📧 Email", value=member.email, inline=False)
+
+    if member.bio:
+        embed.add_field(
+            name="📝 Bio",
+            value=member.bio[:100] + "..." if len(member.bio) > 100 else member.bio,
+            inline=False,
+        )
+
+    if has_clickup:
+        embed.add_field(
+            name="✅ ClickUp Integration",
+            value="Your ClickUp account is connected! Use `/my-tasks` to view your tasks.",
+            inline=False,
+        )
+    else:
+        embed.add_field(
+            name="⚠️ ClickUp Integration",
+            value=(
+                "Not set up yet.\n\n"
+                "**To connect ClickUp:**\n"
+                "1. Get your ClickUp API token from [ClickUp Settings](https://app.clickup.com/settings/apps)\n"
+                "2. Use `/setup-clickup <your_token>` to save it"
+            ),
+            inline=False,
+        )
+
+    if member.profile_url:
+        embed.add_field(
+            name="📄 Profile Document",
+            value=f"[View your profile]({member.profile_url})",
+            inline=False,
+        )
+
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(
+    name="setup-clickup", description="Save your ClickUp API token for task integration"
+)
+@app_commands.describe(
+    token="Your ClickUp API token from app.clickup.com/settings/apps"
+)
+async def setup_clickup(interaction: discord.Interaction, token: str):
+    """Save and validate ClickUp API token."""
+    await interaction.response.defer(ephemeral=True)
+
+    discord_username = f"{interaction.user.name}#{interaction.user.discriminator}"
+    if interaction.user.discriminator == "0":
+        discord_username = interaction.user.name
+
+    logger.info(f"Setup ClickUp command called by {discord_username}")
+
+    # Check if user exists
+    member = bot.team_service.get_member_by_discord(discord_username)
+
+    if not member:
+        embed = discord.Embed(
+            title="❌ Profile Not Found",
+            description=(
+                "You need to complete the onboarding process first.\n"
+                "Use `/setup` to check your status."
+            ),
+            color=discord.Color.red(),
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        return
+
+    # Validate the token
+    clickup_service = ClickUpService(token)
+    is_valid, error_message = await clickup_service.validate_token()
+
+    if not is_valid:
+        embed = discord.Embed(
+            title="❌ Invalid Token",
+            description=f"Failed to validate your ClickUp token:\n{error_message}",
+            color=discord.Color.red(),
+        )
+        embed.add_field(
+            name="How to get your token",
+            value=(
+                "1. Go to [ClickUp Settings](https://app.clickup.com/settings/apps)\n"
+                "2. Click 'Generate' under API Token\n"
+                "3. Copy the token and try again"
+            ),
+            inline=False,
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        return
+
+    # Get user info from ClickUp
+    user_info = await clickup_service.get_user_info()
+
+    # Save the token
+    updated_member = bot.team_service.update_clickup_token(discord_username, token)
+
+    if not updated_member:
+        embed = discord.Embed(
+            title="❌ Error",
+            description="Failed to save your ClickUp token. Please try again.",
+            color=discord.Color.red(),
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        return
+
+    embed = discord.Embed(
+        title="✅ ClickUp Connected",
+        description="Your ClickUp API token has been saved successfully!",
+        color=discord.Color.green(),
+    )
+
+    if user_info:
+        embed.add_field(
+            name="Connected as",
+            value=f"{user_info.get('username', 'Unknown')}",
+            inline=False,
+        )
+
+    embed.add_field(
+        name="Next Steps",
+        value=(
+            "• Use `/my-tasks <list_id>` to view your tasks\n"
+            "• Your token is stored securely and never shown again\n"
+            "• You can update it anytime by running this command again"
+        ),
+        inline=False,
+    )
+
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="my-tasks", description="View all your assigned ClickUp tasks")
+async def my_tasks(interaction: discord.Interaction):
+    """Fetch and display user's ClickUp tasks across all teams and lists."""
+    await interaction.response.defer(ephemeral=True)
+
+    discord_username = f"{interaction.user.name}#{interaction.user.discriminator}"
+    if interaction.user.discriminator == "0":
+        discord_username = interaction.user.name
+
+    logger.info(f"My tasks command called by {discord_username}")
+
+    # Get user profile
+    member = bot.team_service.get_member_by_discord(discord_username)
+
+    if not member:
+        embed = discord.Embed(
+            title="❌ Profile Not Found",
+            description="Use `/setup` to check your onboarding status.",
+            color=discord.Color.red(),
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        return
+
+    if not member.clickup_api_token:
+        embed = discord.Embed(
+            title="❌ ClickUp Not Connected",
+            description="You need to connect your ClickUp account first.\nUse `/setup-clickup <token>` to get started.",
+            color=discord.Color.red(),
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        return
+
+    # Fetch all tasks from ClickUp
+    clickup_service = ClickUpService(member.clickup_api_token)
+    tasks = await clickup_service.get_all_tasks(assigned_only=True)
+
+    if not tasks:
+        embed = discord.Embed(
+            title="📋 No Tasks Found",
+            description="You don't have any tasks assigned across your teams.",
+            color=discord.Color.blue(),
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        return
+
+    # Create embed with tasks
+    embed = discord.Embed(
+        title=f"📋 Your Tasks ({len(tasks)})",
+        description="All tasks assigned to you across your teams",
+        color=discord.Color.blue(),
+    )
+
+    for task in tasks[:10]:  # Limit to 10 tasks to avoid hitting embed limits
+        status = task.get("status", {}).get("status", "Unknown")
+        priority = task.get("priority")
+        due_date = task.get("due_date")
+
+        field_value = f"**Status:** {status}\n"
+
+        if priority:
+            priority_emoji = {"1": "🔴", "2": "🟡", "3": "🔵", "4": "⚪"}.get(
+                str(priority.get("id", "")), ""
+            )
+            field_value += (
+                f"**Priority:** {priority_emoji} {priority.get('priority', 'None')}\n"
+            )
+
+        if due_date:
+            import datetime
+
+            due_timestamp = int(due_date) // 1000
+            due = datetime.datetime.fromtimestamp(due_timestamp)
+            field_value += f"**Due:** {due.strftime('%Y-%m-%d')}\n"
+
+        task_url = task.get("url")
+        if task_url:
+            field_value += f"[View Task]({task_url})"
+
+        embed.add_field(
+            name=task.get("name", "Untitled")[:256],
+            value=field_value[:1024],
+            inline=False,
+        )
+
+    if len(tasks) > 10:
+        embed.set_footer(text=f"Showing 10 of {len(tasks)} tasks")
+
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(
+    name="resend-approval",
+    description="[Admin] Resend approval notification for a pending request",
+)
+@app_commands.describe(request_id="The UUID of the pending onboarding request")
+async def resend_approval(interaction: discord.Interaction, request_id: str):
+    """Resend admin approval notification."""
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        from uuid import UUID
+
+        from bot.onboarding import ApprovalView
+
+        req_uuid = UUID(request_id)
+
+        # Get pending request
+        pending = bot.team_service.data_service.get_pending_onboarding(req_uuid)
+
+        if not pending:
+            await interaction.followup.send(
+                f"❌ No pending request found with ID: {request_id}", ephemeral=True
+            )
+            return
+
+        if pending.status.value != "pending":
+            await interaction.followup.send(
+                f"⚠️ Request is {pending.status.value}, not pending", ephemeral=True
+            )
+            return
+
+        # Get admin channel
+        if not bot.admin_channel_id:
+            await interaction.followup.send(
+                "❌ Admin channel not configured", ephemeral=True
+            )
+            return
+
+        admin_channel = bot.get_channel(bot.admin_channel_id)
+        if not admin_channel:
+            await interaction.followup.send(
+                "❌ Could not find admin channel", ephemeral=True
+            )
+            return
+
+        # Get Discord user
+        discord_user = await bot.fetch_user(pending.discord_id)
+
+        # Create embed
+        embed = discord.Embed(
+            title="🆕 New Onboarding Request",
+            description=f"**{discord_user.mention}** wants to join the team!",
+            color=discord.Color.blue(),
+        )
+
+        embed.add_field(name="Discord User", value=str(discord_user), inline=False)
+        embed.add_field(name="Name", value=pending.name, inline=True)
+        embed.add_field(name="Email", value=pending.email, inline=True)
+
+        if pending.phone:
+            embed.add_field(name="Phone", value=pending.phone, inline=True)
+
+        embed.add_field(name="Bio & Experience", value=pending.bio[:1024], inline=False)
+        embed.set_thumbnail(url=discord_user.display_avatar.url)
+        embed.set_footer(text=f"Request ID: {req_uuid}")
+
+        # Create view
+        view = ApprovalView(
+            req_uuid, pending.discord_id, bot.team_service, bot.docs_service
+        )
+
+        # Send
+        message = await admin_channel.send(embed=embed, view=view)
+
+        await interaction.followup.send(
+            f"✅ Resent approval notification\nJump to: {message.jump_url}",
+            ephemeral=True,
+        )
+
+    except Exception as e:
+        logger.error(f"Error resending approval: {e}", exc_info=True)
+        await interaction.followup.send(f"❌ Error: {str(e)}", ephemeral=True)
+
+
+@bot.tree.command(
+    name="help", description="Show available commands and how to use the bot"
+)
+async def help_command(interaction: discord.Interaction):
+    """Display help information."""
+    embed = discord.Embed(
+        title="🤖 Team Bot Help",
+        description="Here are all the available commands:",
+        color=discord.Color.blue(),
+    )
+
+    embed.add_field(
+        name="/setup",
+        value="Check your onboarding status and profile information",
+        inline=False,
+    )
+
+    embed.add_field(
+        name="/setup-clickup <token>",
+        value=(
+            "Connect your ClickUp account by providing your API token.\n"
+            "Get your token from: https://app.clickup.com/settings/apps"
+        ),
+        inline=False,
+    )
+
+    embed.add_field(
+        name="/my-tasks",
+        value="View all your assigned tasks across all ClickUp teams and lists",
+        inline=False,
+    )
+
+    embed.add_field(name="/help", value="Show this help message", inline=False)
+
+    embed.set_footer(text="💬 You can use all commands in DMs or in server channels!")
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+def main():
+    """Run the bot."""
+    try:
+        logger.info("Starting bot...")
+        bot.run(DISCORD_BOT_TOKEN)
+    except Exception as e:
+        logger.error(f"Failed to start bot: {e}")
+        raise
+
+
+if __name__ == "__main__":
+    main()

@@ -226,4 +226,20 @@ $RECYCLE.BIN/
 .env.production.local
 secrets.json
 config.json
-credentials.json.env
+credentials.json
+*.pickle
+
+# Google credentials
+**/creds/*.json
+!**/creds/.gitkeep
+
+# Exclude onboarding-app (not used by discord-bot)
+onboarding-app/
+
+# UV lock files
+uv.lock
+
+# Test and debug scripts
+**/debug_*.py
+**/test_*.py
+!**/tests/
