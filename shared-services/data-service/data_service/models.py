@@ -140,10 +140,36 @@ class TeamBase(BaseModel):
     discord_role_id: Optional[int] = None
 
 
+class TeamCreate(TeamBase):
+    """Create team model."""
+
+    pass
+
+
+class TeamUpdate(BaseModel):
+    """Update team model - all fields optional."""
+
+    name: Optional[str] = None
+    description: Optional[str] = None
+    team_lead_id: Optional[UUID] = None
+    parent_team_id: Optional[UUID] = None
+    discord_role_id: Optional[int] = None
+    drive_folder_id: Optional[str] = None
+    overview_doc_id: Optional[str] = None
+    overview_doc_url: Optional[str] = None
+    roster_sheet_id: Optional[str] = None
+    roster_sheet_url: Optional[str] = None
+
+
 class Team(TeamBase):
     """Full team model with database fields."""
 
     id: UUID
+    drive_folder_id: Optional[str] = None
+    overview_doc_id: Optional[str] = None
+    overview_doc_url: Optional[str] = None
+    roster_sheet_id: Optional[str] = None
+    roster_sheet_url: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

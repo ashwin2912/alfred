@@ -20,10 +20,11 @@ class GoogleDocsService:
     that can be used by any Alfred component or agent.
     """
 
-    # Scopes for full access to Google Docs and Drive
+    # Scopes for full access to Google Docs, Drive, and Sheets
     SCOPES = [
         "https://www.googleapis.com/auth/documents",
         "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/spreadsheets",
     ]
 
     def __init__(
@@ -45,6 +46,7 @@ class GoogleDocsService:
         self.delegated_user_email = delegated_user_email
         self.docs_service = None
         self.drive_service = None
+        self.sheets_service = None
         self._authenticate()
 
     def _authenticate(self):
@@ -78,6 +80,7 @@ class GoogleDocsService:
 
             self.docs_service = build("docs", "v1", credentials=credentials)
             self.drive_service = build("drive", "v3", credentials=credentials)
+            self.sheets_service = build("sheets", "v4", credentials=credentials)
         except Exception as e:
             raise Exception(f"Failed to authenticate with Google: {str(e)}")
 
@@ -390,6 +393,341 @@ class GoogleDocsService:
 
         except HttpError as e:
             raise Exception(f"Failed to list documents: {str(e)}")
+
+    def create_folder(
+        self,
+        folder_name: str,
+        parent_folder_id: Optional[str] = None,
+    ) -> str:
+        """
+        Create a new Google Drive folder.
+
+        Args:
+            folder_name: Name of the folder
+            parent_folder_id: Optional parent folder ID (uses default if not provided)
+
+        Returns:
+            Folder ID
+
+        Raises:
+            Exception if creation fails
+        """
+        try:
+            folder_metadata = {
+                "name": folder_name,
+                "mimeType": "application/vnd.google-apps.folder",
+            }
+
+            # Set parent folder
+            parent_id = parent_folder_id or self.default_folder_id
+            if parent_id:
+                folder_metadata["parents"] = [parent_id]
+
+            folder = self.drive_service.files().create(body=folder_metadata, fields="id").execute()
+
+            return folder.get("id")
+
+        except HttpError as e:
+            raise Exception(f"Failed to create folder: {str(e)}")
+
+    def get_or_create_folder(
+        self,
+        folder_name: str,
+        parent_folder_id: Optional[str] = None,
+    ) -> str:
+        """
+        Get folder ID if exists, otherwise create it.
+
+        Args:
+            folder_name: Name of the folder
+            parent_folder_id: Optional parent folder ID (uses default if not provided)
+
+        Returns:
+            Folder ID
+
+        Raises:
+            Exception if operation fails
+        """
+        try:
+            parent_id = parent_folder_id or self.default_folder_id
+
+            # Search for existing folder
+            query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+            if parent_id:
+                query += f" and '{parent_id}' in parents"
+
+            results = (
+                self.drive_service.files()
+                .list(q=query, fields="files(id, name)", pageSize=1)
+                .execute()
+            )
+
+            files = results.get("files", [])
+
+            if files:
+                return files[0]["id"]
+            else:
+                return self.create_folder(folder_name, parent_id)
+
+        except HttpError as e:
+            raise Exception(f"Failed to get or create folder: {str(e)}")
+
+    def create_spreadsheet(
+        self,
+        title: str,
+        folder_id: Optional[str] = None,
+        headers: Optional[List[str]] = None,
+    ) -> Dict[str, str]:
+        """
+        Create a new Google Sheet.
+
+        Args:
+            title: Spreadsheet title
+            folder_id: Optional folder ID (uses default if not provided)
+            headers: Optional list of header values for first row
+
+        Returns:
+            Dict with spreadsheet_id and url
+
+        Raises:
+            Exception if creation fails
+        """
+        try:
+            # Create spreadsheet
+            spreadsheet = {"properties": {"title": title}}
+
+            sheet = (
+                self.sheets_service.spreadsheets()
+                .create(body=spreadsheet, fields="spreadsheetId,spreadsheetUrl")
+                .execute()
+            )
+
+            sheet_id = sheet.get("spreadsheetId")
+            sheet_url = sheet.get("spreadsheetUrl")
+
+            # Add headers if provided
+            if headers:
+                self._write_sheet_headers(sheet_id, headers)
+
+            # Move to folder if specified
+            target_folder = folder_id or self.default_folder_id
+            if target_folder:
+                self._move_to_folder(sheet_id, target_folder)
+
+            return {
+                "spreadsheet_id": sheet_id,
+                "url": sheet_url,
+            }
+
+        except HttpError as e:
+            raise Exception(f"Failed to create spreadsheet: {str(e)}")
+
+    def append_to_sheet(
+        self,
+        spreadsheet_id: str,
+        values: List[List[Any]],
+        sheet_name: str = "Sheet1",
+    ) -> bool:
+        """
+        Append rows to a Google Sheet.
+
+        Args:
+            spreadsheet_id: Spreadsheet ID
+            values: List of rows to append (each row is a list of values)
+            sheet_name: Sheet name (default: "Sheet1")
+
+        Returns:
+            True if successful
+
+        Raises:
+            Exception if append fails
+        """
+        try:
+            range_name = f"{sheet_name}!A:Z"
+
+            body = {"values": values}
+
+            self.sheets_service.spreadsheets().values().append(
+                spreadsheetId=spreadsheet_id,
+                range=range_name,
+                valueInputOption="USER_ENTERED",
+                insertDataOption="INSERT_ROWS",
+                body=body,
+            ).execute()
+
+            return True
+
+        except HttpError as e:
+            raise Exception(f"Failed to append to sheet: {str(e)}")
+
+    def update_sheet_row(
+        self,
+        spreadsheet_id: str,
+        row_index: int,
+        values: List[Any],
+        sheet_name: str = "Sheet1",
+    ) -> bool:
+        """
+        Update a specific row in a Google Sheet.
+
+        Args:
+            spreadsheet_id: Spreadsheet ID
+            row_index: Row number (1-indexed)
+            values: List of values for the row
+            sheet_name: Sheet name (default: "Sheet1")
+
+        Returns:
+            True if successful
+
+        Raises:
+            Exception if update fails
+        """
+        try:
+            range_name = f"{sheet_name}!A{row_index}:Z{row_index}"
+
+            body = {"values": [values]}
+
+            self.sheets_service.spreadsheets().values().update(
+                spreadsheetId=spreadsheet_id,
+                range=range_name,
+                valueInputOption="USER_ENTERED",
+                body=body,
+            ).execute()
+
+            return True
+
+        except HttpError as e:
+            raise Exception(f"Failed to update sheet row: {str(e)}")
+
+    def create_team_folder_structure(
+        self,
+        team_name: str,
+    ) -> Dict[str, str]:
+        """
+        Create folder structure for a team.
+
+        Creates:
+        - Team folder (e.g., "Engineering")
+        - Team Overview document
+        - Active Team Members spreadsheet
+
+        Args:
+            team_name: Name of the team (e.g., "Engineering", "Product", "Business")
+
+        Returns:
+            Dict with folder_id, overview_doc_id, overview_doc_url, roster_sheet_id, roster_sheet_url
+
+        Raises:
+            Exception if creation fails
+        """
+        try:
+            # Create team folder
+            team_folder_id = self.get_or_create_folder(team_name)
+
+            # Create Team Overview document
+            overview_content = f"""# {team_name} Team
+
+## Team Introduction
+Welcome to the {team_name} team!
+
+## Team Responsibilities
+[Add team responsibilities here]
+
+## Milestones
+[Add team milestones here]
+
+## Resources
+- Active Team Members: [Link will be in the same folder]
+"""
+            overview_doc = self.create_document(
+                title=f"{team_name} - Team Overview",
+                content=overview_content,
+                folder_id=team_folder_id,
+            )
+
+            # Create Active Team Members spreadsheet
+            roster_headers = [
+                "Name",
+                "Discord Username",
+                "Email",
+                "Role",
+                "Join Date",
+                "Profile Link",
+            ]
+
+            roster_sheet = self.create_spreadsheet(
+                title=f"{team_name} - Active Team Members",
+                folder_id=team_folder_id,
+                headers=roster_headers,
+            )
+
+            return {
+                "folder_id": team_folder_id,
+                "overview_doc_id": overview_doc.id,
+                "overview_doc_url": overview_doc.url,
+                "roster_sheet_id": roster_sheet["spreadsheet_id"],
+                "roster_sheet_url": roster_sheet["url"],
+            }
+
+        except Exception as e:
+            raise Exception(f"Failed to create team folder structure: {str(e)}")
+
+    def add_member_to_roster(
+        self,
+        spreadsheet_id: str,
+        member_name: str,
+        discord_username: str,
+        email: str,
+        role: str,
+        profile_url: str,
+        join_date: Optional[str] = None,
+    ) -> bool:
+        """
+        Add a team member to the roster spreadsheet.
+
+        Args:
+            spreadsheet_id: Roster spreadsheet ID
+            member_name: Member's full name
+            discord_username: Discord username
+            email: Email address
+            role: Role/title
+            profile_url: Link to member's profile document
+            join_date: Join date (defaults to today)
+
+        Returns:
+            True if successful
+
+        Raises:
+            Exception if append fails
+        """
+        if not join_date:
+            join_date = datetime.now().strftime("%Y-%m-%d")
+
+        values = [
+            [
+                member_name,
+                discord_username,
+                email,
+                role,
+                join_date,
+                profile_url,
+            ]
+        ]
+
+        return self.append_to_sheet(spreadsheet_id, values)
+
+    def _write_sheet_headers(self, spreadsheet_id: str, headers: List[str]):
+        """Write headers to first row of a sheet."""
+        range_name = "Sheet1!A1:Z1"
+
+        body = {"values": [headers]}
+
+        self.sheets_service.spreadsheets().values().update(
+            spreadsheetId=spreadsheet_id,
+            range=range_name,
+            valueInputOption="USER_ENTERED",
+            body=body,
+        ).execute()
 
     def _write_content(self, document_id: str, content: str):
         """Write content to a document."""

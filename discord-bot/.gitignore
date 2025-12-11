@@ -44,10 +44,5 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Test and debug scripts
-debug_*.py
-test_*.py
-create_admin.py
-
 # UV lock files
 uv.lock
