@@ -58,6 +58,7 @@ class DocsService:
     def __init__(self):
         """Initialize Google Docs service if credentials are available."""
         self.docs_service = None
+        self._team_management_folder_id = None
 
         if GoogleDocsService:
             try:
@@ -78,27 +79,105 @@ class DocsService:
         """Check if Google Docs service is available."""
         return self.docs_service is not None
 
-    def create_team_member_profile(self, member_data: dict) -> Optional[str]:
+    def get_team_management_folder(self) -> Optional[str]:
         """
-        Create a Google Doc profile for a team member.
+        Get or create the Team Management folder.
+
+        Returns:
+            Folder ID of the Team Management folder
+        """
+        if not self.is_available():
+            return None
+
+        if self._team_management_folder_id:
+            return self._team_management_folder_id
+
+        try:
+            self._team_management_folder_id = self.docs_service.get_or_create_folder(
+                "Team Management"
+            )
+            return self._team_management_folder_id
+        except Exception as e:
+            print(f"Error creating Team Management folder: {e}")
+            return None
+
+    def create_team_member_profile(
+        self, member_data: dict, team_name: Optional[str] = None
+    ) -> Optional[dict]:
+        """
+        Create a Google Doc profile for a team member in the Team Management folder.
 
         Args:
             member_data: Dict with keys: name, email, phone, team, role, bio
+            team_name: Optional team name for roster update
 
         Returns:
-            URL of the created document, or None if failed
+            Dict with doc_id and url, or None if failed
         """
         if not self.is_available():
             return None
 
         try:
+            # Get Team Management folder
+            folder_id = self.get_team_management_folder()
+            if not folder_id:
+                print("Warning: Could not get Team Management folder, using default")
+                folder_id = None
+
             doc = self.docs_service.create_from_template(
-                "team_member_profile", member_data
+                "team_member_profile", member_data, folder_id=folder_id
             )
-            return doc.url
+            return {"doc_id": doc.id, "url": doc.url}
         except Exception as e:
             print(f"Error creating Google Doc: {e}")
             return None
+
+    def create_team_folder_structure(self, team_name: str) -> Optional[dict]:
+        """
+        Create folder structure for a team.
+
+        Returns:
+            Dict with folder_id, overview_doc_id, overview_doc_url, roster_sheet_id, roster_sheet_url
+        """
+        if not self.is_available():
+            return None
+
+        try:
+            return self.docs_service.create_team_folder_structure(team_name)
+        except Exception as e:
+            print(f"Error creating team folder structure: {e}")
+            return None
+
+    def add_member_to_roster(
+        self,
+        roster_sheet_id: str,
+        member_name: str,
+        discord_username: str,
+        email: str,
+        role: str,
+        profile_url: str,
+    ) -> bool:
+        """
+        Add a team member to the roster spreadsheet.
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.is_available():
+            return False
+
+        try:
+            return self.docs_service.add_member_to_roster(
+                spreadsheet_id=roster_sheet_id,
+                member_name=member_name,
+                discord_username=discord_username,
+                email=email,
+                role=role,
+                profile_url=profile_url,
+            )
+        except Exception as e:
+            print(f"Error adding member to roster: {e}")
+            return False
 
 
 class ClickUpService:

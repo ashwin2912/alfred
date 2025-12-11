@@ -198,15 +198,54 @@ class OnboardingView(discord.ui.View):
         await interaction.response.send_modal(modal)
 
 
-class TeamRoleSelectionModal(discord.ui.Modal, title="Assign Team & Role"):
-    """Modal for admin to select team and role during approval."""
+class TeamSelectionView(discord.ui.View):
+    """View for selecting team during approval."""
 
-    team = discord.ui.TextInput(
-        label="Team",
-        placeholder="Engineering, Product, or Business",
-        required=True,
-        max_length=100,
+    def __init__(
+        self,
+        request_id: UUID,
+        user_id: int,
+        team_service: TeamMemberService,
+        docs_service,
+        original_message,
+    ):
+        super().__init__(timeout=300)  # 5 minute timeout
+        self.request_id = request_id
+        self.user_id = user_id
+        self.team_service = team_service
+        self.docs_service = docs_service
+        self.original_message = original_message
+        self.selected_team = None
+
+    @discord.ui.select(
+        placeholder="Select Team",
+        options=[
+            discord.SelectOption(label="Engineering", value="Engineering", emoji="⚙️"),
+            discord.SelectOption(label="Product", value="Product", emoji="📱"),
+            discord.SelectOption(label="Business", value="Business", emoji="💼"),
+        ],
     )
+    async def team_select(
+        self, interaction: discord.Interaction, select: discord.ui.Select
+    ):
+        """Handle team selection."""
+        self.selected_team = select.values[0]
+        logger.info(f"Team selected: {self.selected_team}")
+
+        # Now show role input modal
+        modal = RoleInputModal(
+            self.request_id,
+            self.user_id,
+            self.selected_team,
+            self.team_service,
+            self.docs_service,
+            self.original_message,
+        )
+        await interaction.response.send_modal(modal)
+
+
+class RoleInputModal(discord.ui.Modal, title="Assign Role"):
+    """Modal to input role after team is selected."""
 
     role = discord.ui.TextInput(
         label="Role (optional)",
@@ -219,6 +258,7 @@ class TeamRoleSelectionModal(discord.ui.Modal, title="Assign Team & Role"):
         self,
         request_id: UUID,
         user_id: int,
+        team: str,
         team_service: TeamMemberService,
         docs_service,
         original_message,
@@ -226,12 +266,21 @@ class TeamRoleSelectionModal(discord.ui.Modal, title="Assign Team & Role"):
         super().__init__()
         self.request_id = request_id
         self.user_id = user_id
+        self.team = team
         self.team_service = team_service
         self.docs_service = docs_service
         self.original_message = original_message
 
     async def on_submit(self, interaction: discord.Interaction):
-        """Handle team/role assignment and complete approval."""
+        """Process approval with team and role."""
+        # Call the same logic as the old TeamRoleSelectionModal
+        # but with self.team and self.role.value
+        await self._process_approval(interaction, self.team, self.role.value)
+
+    async def _process_approval(
+        self, interaction: discord.Interaction, team: str, role: str
+    ):
+        """Handle the approval process."""
         await interaction.response.defer(ephemeral=True)
 
         try:
@@ -286,20 +335,92 @@ class TeamRoleSelectionModal(discord.ui.Modal, title="Assign Team & Role"):
             approval = OnboardingApproval(request_id=self.request_id, approved=True)
             self.team_service.data_service.approve_onboarding(approval, admin_member.id)
 
-            # Create Google Doc profile
+            # Create Supabase auth user automatically
+            from uuid import uuid4
+
+            from data_service.models import TeamMemberCreate
+
+            supabase_user_id = None
+            temp_password = None
+
+            try:
+                supabase_user_id, temp_password = (
+                    self.team_service.data_service.create_supabase_user(
+                        email=pending.email, name=pending.name
+                    )
+                )
+                logger.info(f"Created Supabase user: {supabase_user_id}")
+            except Exception as e:
+                logger.error(f"Error creating Supabase user: {e}")
+                # Continue with temporary UUID if Supabase creation fails
+                supabase_user_id = uuid4()
+
+            # Create team_members record
+            team_member_data = TeamMemberCreate(
+                user_id=supabase_user_id,
+                discord_id=pending.discord_id,
+                discord_username=pending.discord_username,
+                name=pending.name,
+                email=pending.email,
+                phone=pending.phone,
+                bio=pending.bio,
+            )
+
+            try:
+                new_member = self.team_service.data_service.create_team_member(
+                    team_member_data
+                )
+                logger.info(f"Created team_members record: {new_member.id}")
+            except Exception as e:
+                logger.error(f"Error creating team_members record: {e}")
+
+            # Create Google Doc profile and add to team roster
             doc_url = None
+            doc_id = None
+            roster_added = False
+
             if self.docs_service.is_available():
                 try:
+                    # Create member profile in Team Management folder
                     member_data = {
                         "name": pending.name,
                         "email": pending.email,
                         "phone": pending.phone or "Not provided",
-                        "team": self.team.value,
-                        "role": self.role.value or "To be assigned",
+                        "team": team,
+                        "role": role or "To be assigned",
                         "bio": pending.bio,
                     }
-                    doc_url = self.docs_service.create_team_member_profile(member_data)
-                    logger.info(f"Created Google Doc profile: {doc_url}")
+                    profile_result = self.docs_service.create_team_member_profile(
+                        member_data, team
+                    )
+                    if profile_result:
+                        doc_url = profile_result["url"]
+                        doc_id = profile_result["doc_id"]
+                        logger.info(f"Created Google Doc profile: {doc_url}")
+
+                        # Get team from database to get roster sheet ID
+                        db_team = self.team_service.data_service.get_team_by_name(team)
+                        if db_team and db_team.roster_sheet_id:
+                            # Add to team roster
+                            try:
+                                roster_added = self.docs_service.add_member_to_roster(
+                                    roster_sheet_id=db_team.roster_sheet_id,
+                                    member_name=pending.name,
+                                    discord_username=pending.discord_username,
+                                    email=pending.email,
+                                    role=role or "TBD",
+                                    profile_url=doc_url,
+                                )
+                                if roster_added:
+                                    logger.info(
+                                        f"Added {pending.name} to {team} roster"
+                                    )
+                            except Exception as e:
+                                logger.error(f"Error adding to roster: {e}")
+                        else:
+                            logger.warning(
+                                f"Team {team} does not have roster_sheet_id set"
+                            )
                 except Exception as e:
                     logger.error(f"Error creating Google Doc: {e}")
 
@@ -307,17 +428,16 @@ class TeamRoleSelectionModal(discord.ui.Modal, title="Assign Team & Role"):
             original_embed = self.original_message.embeds[0]
             original_embed.color = discord.Color.green()
             original_embed.title = f"✅ Approved by {interaction.user.name}"
-            original_embed.add_field(
-                name="Assigned Team", value=self.team.value, inline=True
-            )
-            if self.role.value:
-                original_embed.add_field(
-                    name="Assigned Role", value=self.role.value, inline=True
-                )
+            original_embed.add_field(name="Assigned Team", value=team, inline=True)
+            if role:
+                original_embed.add_field(name="Assigned Role", value=role, inline=True)
             if doc_url:
+                profile_status = "✅ Profile created"
+                if roster_added:
+                    profile_status += " & added to team roster"
                 original_embed.add_field(
-                    name="📄 Profile Created",
-                    value=f"[View Document]({doc_url})",
+                    name="📄 " + profile_status,
+                    value=f"[View Profile Document]({doc_url})",
                     inline=False,
                 )
 
@@ -331,17 +451,36 @@ class TeamRoleSelectionModal(discord.ui.Modal, title="Assign Team & Role"):
             )
 
             admin_checklist.add_field(
-                name="1️⃣ Create Supabase User",
-                value=f"Email: `{pending.email}`\nCreate in Supabase dashboard",
+                name="1️⃣ Team Member Record",
+                value=f"✅ Created in database\nEmail: `{pending.email}`",
                 inline=False,
             )
 
+            # Supabase user field
+            if temp_password:
+                admin_checklist.add_field(
+                    name="2️⃣ Supabase User",
+                    value=(
+                        f"✅ Automatically created\n"
+                        f"Email: `{pending.email}`\n"
+                        f"Temp Password: `{temp_password}`\n"
+                        f"**Send credentials to user securely**"
+                    ),
+                    inline=False,
+                )
+            else:
+                admin_checklist.add_field(
+                    name="2️⃣ Create Supabase User",
+                    value=f"⚠️ Auto-creation failed - create manually in Supabase dashboard\nEmail: `{pending.email}`",
+                    inline=False,
+                )
+
             admin_checklist.add_field(
-                name="2️⃣ Add to ClickUp",
+                name="3️⃣ Add to ClickUp",
                 value=(
                     f"Email: `{pending.email}`\n"
-                    f"Team: {self.team.value}\n"
-                    f"Role: {self.role.value if self.role.value else 'TBD'}\n"
+                    f"Team: {team}\n"
+                    f"Role: {role if role else 'TBD'}\n"
                     f"⚠️ **ACTION REQUIRED:** Add this user to ClickUp workspace manually"
                 ),
                 inline=False,
@@ -353,41 +492,38 @@ class TeamRoleSelectionModal(discord.ui.Modal, title="Assign Team & Role"):
                 guild = interaction.guild
                 member = guild.get_member(self.user_id)
                 if member:
-                    # Try to find and assign role based on team name
-                    team_role = discord.utils.get(guild.roles, name=self.team.value)
+                    team_role = discord.utils.get(guild.roles, name=team)
                     if team_role:
                         await member.add_roles(team_role)
                         role_assigned = True
-                        logger.info(f"Assigned {self.team.value} role to {member.name}")
+                        logger.info(f"Assigned {team} role to {member.name}")
                     else:
-                        logger.warning(f"Role '{self.team.value}' not found in guild")
+                        logger.warning(f"Role '{team}' not found in guild")
             except Exception as e:
                 logger.error(f"Error assigning Discord role: {e}")
 
-            # Add Discord role status to checklist
             if role_assigned:
                 admin_checklist.add_field(
-                    name="3️⃣ Discord Roles",
-                    value=f"✅ Assigned {self.team.value} role",
+                    name="4️⃣ Discord Roles",
+                    value=f"✅ Assigned {team} role",
                     inline=False,
                 )
             else:
                 admin_checklist.add_field(
-                    name="3️⃣ Discord Roles",
-                    value=f"⚠️ Could not find '{self.team.value}' role - assign manually",
+                    name="4️⃣ Discord Roles",
+                    value=f"⚠️ Could not find '{team}' role - assign manually",
                     inline=False,
                 )
 
-            # Add Google Docs status to checklist
             if doc_url:
                 admin_checklist.add_field(
-                    name="4️⃣ Google Doc Profile",
+                    name="5️⃣ Google Doc Profile",
                     value=f"✅ Created: [View Document]({doc_url})",
                     inline=False,
                 )
             else:
                 admin_checklist.add_field(
-                    name="4️⃣ Create Google Doc Profile",
+                    name="5️⃣ Create Google Doc Profile",
                     value="⚠️ Google Docs not configured - create manually",
                     inline=False,
                 )
@@ -405,23 +541,18 @@ class TeamRoleSelectionModal(discord.ui.Modal, title="Assign Team & Role"):
 
                 user_embed.add_field(
                     name="Your Assignment",
-                    value=f"**Team:** {self.team.value}\n**Role:** {self.role.value if self.role.value else 'To be assigned'}",
+                    value=f"**Team:** {team}\n**Role:** {role if role else 'To be assigned'}",
                     inline=False,
                 )
 
-                next_steps = (
-                    "1. You'll receive login credentials via email\n"
-                    "2. You'll be added to ClickUp\n"
-                )
+                next_steps = "1. You'll be added to ClickUp\n"
 
                 if role_assigned:
-                    next_steps += (
-                        f"3. ✅ You've been assigned the {self.team.value} role\n"
-                    )
+                    next_steps += f"2. ✅ You've been assigned the {team} role\n"
                 else:
-                    next_steps += "3. You'll get team role access soon\n"
+                    next_steps += "2. You'll get team role access soon\n"
 
-                next_steps += "4. Use `/setup` in #alfred to view your profile"
+                next_steps += "3. Use `/setup` in #alfred to view your profile"
 
                 user_embed.add_field(
                     name="What's Next?",
@@ -460,18 +591,23 @@ class ApprovalView(discord.ui.View):
     async def approve(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
-        """Show modal to assign team and role."""
+        """Show team selection view."""
         try:
             logger.info(f"Approve button clicked by {interaction.user}")
-            modal = TeamRoleSelectionModal(
+
+            # Show team selection view
+            view = TeamSelectionView(
                 self.request_id,
                 self.user_id,
                 self.team_service,
                 self.docs_service,
                 interaction.message,
             )
-            await interaction.response.send_modal(modal)
-            logger.info(f"Modal sent successfully")
+
+            await interaction.response.send_message(
+                "Please select the team:", view=view, ephemeral=True
+            )
+            logger.info(f"Team selection view sent")
         except Exception as e:
             logger.error(f"Error in approve button: {e}", exc_info=True)
             await interaction.response.send_message(

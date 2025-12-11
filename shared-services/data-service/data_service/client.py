@@ -1,7 +1,9 @@
 """Data service client - handles all database operations."""
 
 import os
-from typing import List, Optional
+import secrets
+import string
+from typing import List, Optional, Tuple
 from uuid import UUID
 
 from supabase import Client, create_client
@@ -16,6 +18,7 @@ from .models import (
     TeamMemberCreate,
     TeamMembership,
     TeamMemberUpdate,
+    TeamUpdate,
 )
 
 
@@ -36,6 +39,8 @@ class DataService:
             supabase_service_key: Service role key (for admin operations)
         """
         self.client: Client = create_client(supabase_url, supabase_service_key)
+        self.supabase_url = supabase_url
+        self.supabase_service_key = supabase_service_key
 
     # Team Members CRUD
 
@@ -531,6 +536,32 @@ class DataService:
         except Exception as e:
             raise Exception(f"Failed to get team: {str(e)}")
 
+    def update_team(self, team_id: UUID, updates: TeamUpdate) -> Team:
+        """Update team information."""
+        try:
+            # Filter out None values
+            update_data = {
+                k: v for k, v in updates.model_dump().items() if v is not None
+            }
+
+            if not update_data:
+                raise ValueError("No updates provided")
+
+            response = (
+                self.client.table("teams")
+                .update(update_data)
+                .eq("id", str(team_id))
+                .execute()
+            )
+
+            if not response.data:
+                raise Exception("Team not found")
+
+            return Team(**response.data[0])
+
+        except Exception as e:
+            raise Exception(f"Failed to update team: {str(e)}")
+
     # Roles CRUD
 
     def list_roles(self) -> List[Role]:
@@ -562,6 +593,62 @@ class DataService:
             return [Role(**role) for role in response.data]
         except Exception as e:
             raise Exception(f"Failed to get roles by level: {str(e)}")
+
+    # Supabase Auth User Management
+
+    def create_supabase_user(self, email: str, name: str) -> Tuple[UUID, str]:
+        """
+        Create a Supabase auth user with auto-generated password.
+
+        Args:
+            email: User's email
+            name: User's full name (for metadata)
+
+        Returns:
+            Tuple of (user_id, temporary_password)
+
+        Raises:
+            Exception if user creation fails
+        """
+        try:
+            import requests
+
+            # Generate a secure random password
+            password = self._generate_password()
+
+            # Create user using Supabase Admin API
+            url = f"{self.supabase_url}/auth/v1/admin/users"
+            headers = {
+                "apikey": self.supabase_service_key,
+                "Authorization": f"Bearer {self.supabase_service_key}",
+                "Content-Type": "application/json",
+            }
+
+            payload = {
+                "email": email,
+                "password": password,
+                "email_confirm": True,  # Auto-confirm email
+                "user_metadata": {"full_name": name},
+            }
+
+            response = requests.post(url, json=payload, headers=headers)
+
+            if response.status_code == 200:
+                user_data = response.json()
+                user_id = UUID(user_data["id"])
+                return user_id, password
+            else:
+                error_msg = response.json().get("msg", response.text)
+                raise Exception(f"Supabase API error: {error_msg}")
+
+        except Exception as e:
+            raise Exception(f"Failed to create Supabase user: {str(e)}")
+
+    def _generate_password(self, length: int = 16) -> str:
+        """Generate a secure random password."""
+        alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+        password = "".join(secrets.choice(alphabet) for _ in range(length))
+        return password
 
 
 def create_data_service(

@@ -233,13 +233,5 @@ credentials.json
 **/creds/*.json
 !**/creds/.gitkeep
 
-# Exclude onboarding-app (not used by discord-bot)
-onboarding-app/
-
 # UV lock files
 uv.lock
-
-# Test and debug scripts
-**/debug_*.py
-**/test_*.py
-!**/tests/
