@@ -775,6 +775,7 @@ class DataService:
     def create_team(
         self,
         name: str,
+        team_lead_id: UUID,
         description: Optional[str] = None,
         drive_folder_id: Optional[str] = None,
         overview_doc_id: Optional[str] = None,
@@ -791,6 +792,7 @@ class DataService:
 
         Args:
             name: Team name
+            team_lead_id: UUID of the team lead (REQUIRED - migration 011 constraint)
             description: Team description
             drive_folder_id: Google Drive folder ID
             overview_doc_id: Team overview document ID
@@ -811,6 +813,7 @@ class DataService:
         try:
             team_data = {
                 "name": name,
+                "team_lead_id": str(team_lead_id),
                 "description": description,
                 "drive_folder_id": drive_folder_id,
                 "overview_doc_id": overview_doc_id,

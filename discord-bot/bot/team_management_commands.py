@@ -87,7 +87,7 @@ class TeamManagementCommands:
             team_name="Name of the team (e.g., Engineering, Product, Business)",
             team_color="Color for the Discord role",
             description="Brief description of the team",
-            team_lead="Optional: Assign a team lead",
+            team_lead="Select the team lead (REQUIRED)",
         )
         @app_commands.choices(
             team_color=[
@@ -106,7 +106,7 @@ class TeamManagementCommands:
             team_name: str,
             team_color: str,
             description: str,
-            team_lead: Optional[discord.Member] = None,
+            team_lead: discord.Member,
         ):
             """Create a new team with complete infrastructure."""
             # Check admin access
@@ -117,6 +117,18 @@ class TeamManagementCommands:
 
             # Defer response since this will take time
             await interaction.response.defer(ephemeral=True)
+
+            # Verify team lead is in database
+            team_lead_member = self.team_service.data_service.get_team_member_by_discord_id(
+                team_lead.id
+            )
+            if not team_lead_member:
+                await interaction.followup.send(
+                    f"❌ {team_lead.mention} is not onboarded yet. "
+                    f"Please have them complete onboarding first using the welcome message.",
+                    ephemeral=True,
+                )
+                return
 
             try:
                 # Step 1: Create Discord roles (team + manager)
@@ -165,10 +177,11 @@ class TeamManagementCommands:
                     # Continue with partial setup
                     folder_result = {}
 
-                # Step 4: Create team in database
+                # Step 4: Create team in database with team lead
                 logger.info(f"Creating team record in database: {team_name}")
                 team = self.team_service.data_service.create_team(
                     name=team_name,
+                    team_lead_id=team_lead_member.id,
                     description=description,
                     drive_folder_id=folder_result.get("folder_id"),
                     overview_doc_id=folder_result.get("overview_doc_id"),
@@ -183,37 +196,26 @@ class TeamManagementCommands:
                     else None,
                 )
 
-                # Step 5: Assign team lead if specified
-                if team_lead:
-                    logger.info(f"Assigning team lead: {team_lead.name}")
-                    # Add both team and manager roles to team lead
-                    await team_lead.add_roles(team_role, manager_role)
+                # Step 5: Assign team lead roles and add to team
+                logger.info(f"Assigning team lead: {team_lead.name}")
+                # Add both team and manager roles to team lead
+                await team_lead.add_roles(team_role, manager_role)
 
-                    # Check if team lead is in database
-                    member = (
-                        self.team_service.data_service.get_team_member_by_discord_id(
-                            team_lead.id
-                        )
+                # Add to team
+                self.team_service.data_service.add_member_to_team(
+                    team_lead_member.id, team.id, role=f"{team_name} Team Lead"
+                )
+
+                # Update roster
+                if folder_result.get("roster_sheet_id"):
+                    self.docs_service.add_member_to_roster(
+                        roster_sheet_id=folder_result["roster_sheet_id"],
+                        member_name=team_lead_member.name,
+                        discord_username=team_lead_member.discord_username or team_lead.name,
+                        email=team_lead_member.email,
+                        role=f"{team_name} Team Lead",
+                        profile_url=team_lead_member.profile_url or "",
                     )
-                    if member:
-                        # Add to team
-                        self.team_service.data_service.add_member_to_team(
-                            member.id, team.id, role=f"{team_name} Team Lead"
-                        )
-
-                        # Update team_lead_id in teams table
-                        self.team_service.data_service.client.table("teams").update(
-                            {"team_lead_id": str(member.id)}
-                        ).eq("id", str(team.id)).execute()
-                        # Update roster
-                        if folder_result.get("roster_sheet_id"):
-                            self.docs_service.add_member_to_roster(
-                                folder_result["roster_sheet_id"],
-                                member.name,
-                                member.email,
-                                f"{team_name} Team Lead",
-                                folder_result.get("overview_doc_url", ""),
-                            )
 
                 # Build response
                 embed = discord.Embed(
