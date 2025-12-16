@@ -373,126 +373,170 @@ Bot: ✅ Promoted john to Team Lead of Engineering
 
 ---
 
-### `/set-team-workspace`
+### `/team-report`
 
-**Description**: Link a ClickUp workspace to a team.
+**Description**: Generate a comprehensive task report for your team.
 
-**Who can use**: Admins only
+**Who can use**: Team Leads and Admins only
 
-**Parameters**:
-- `team_name` (required): Name of the team
-- `workspace_id` (required): ClickUp workspace ID
+**Parameters**: None (auto-detects team from channel)
 
 **What it does**:
-1. Updates team record with ClickUp workspace ID
-2. Enables team-specific task filtering
-3. Confirms successful linking
+1. Fetches all tasks from team's configured ClickUp lists
+2. Validates ClickUp API token
+3. Generates rich report with:
+   - Total tasks and active members
+   - Status breakdown
+   - Priority distribution
+   - Top contributors
+   - Recent tasks (top 10) with clickable links
+   - Overdue tasks
+   - Tasks due soon (within 3 days)
 
-**Admin Experience**:
+**Team Lead Experience**:
 ```
-Admin: /set-team-workspace 
-       team_name:Engineering 
-       workspace_id:12345678
+# In #engineering-general
+Team Lead: /team-report
 
-Bot: ✅ Linked ClickUp workspace 12345678 to Engineering
+Bot: 📊 Engineering Team Report
+     Daily status report • December 14, 2024
      
-     Team members can now:
-     • View team-specific tasks
-     • Filter tasks by workspace
+     📈 Overview
+     Total Tasks: 24
+     Active Members: 5
+     ⚠️ Overdue: 2
+     ⏰ Due Soon (3 days): 4
+     
+     📝 Recent Tasks
+     🔴 [Implement auth system](clickup-link) - In Progress (john_doe)
+     🟡 [Design database schema](clickup-link) - To Do (jane_smith)
+     ...
 ```
 
 **Notes**:
-- Workspace ID found in ClickUp workspace settings
-- One workspace per team
-- Doesn't require ClickUp API access from bot
+- Must be run in team channel (#team-general or #team-standups)
+- Requires at least one team member to have ClickUp token configured
+- Shows error if token is expired/invalid
+- Only shows tasks from configured project lists
 
 ---
 
 ## Task Management Commands
 
-### `/add-list <list_id> <list_name>`
+### `/add-project-list`
 
-**Description**: Add a ClickUp list to the project scope (admin only).
+**Description**: Add a ClickUp list to your team's project tracking.
 
-**Who can use**: Admins only
+**Who can use**: Team Leads and Admins (with Manager roles)
 
 **Parameters**:
 - `list_id` (required): The ClickUp list ID
 - `list_name` (required): Friendly name for the list
+- `description` (optional): Description of this list
 
 **What it does**:
-1. Adds list to `project_lists` table
-2. Tasks from this list will appear in `/my-tasks`
-3. Confirms successful addition
+1. Auto-detects team from the channel you're in
+2. Adds list to `clickup_lists` table for your team
+3. Tasks from this list will appear in `/my-tasks` and `/team-report`
+4. Confirms successful addition
 
-**Admin Experience**:
+**Team Lead Experience**:
 ```
-Admin: /add-list 
-       list_id:123456789 
-       list_name:Engineering Tasks
+# In #engineering-general
+Team Lead: /add-project-list 
+           list_id:901112661012
+           list_name:Sprint Tasks
+           description:Current sprint work
 
-Bot: ✅ Added ClickUp list to project scope
-     List Name: Engineering Tasks
-     List ID: 123456789
+Bot: ✅ Project List Added
+     Successfully added ClickUp list to Engineering team
      
-     This list is now included in /my-tasks for all users.
+     List Name: Sprint Tasks
+     List ID: 901112661012
+     Team: Engineering
+     
+     📝 Note
+     Team members will now only see tasks from configured 
+     project lists in /my-tasks
 ```
 
 **Notes**:
-- List ID found in ClickUp list URL
-- Only tasks from configured lists appear in `/my-tasks`
-- Can add multiple lists
+- List ID found in ClickUp list URL (e.g., `/l/6-901112661012-1` → `901112661012`)
+- Must run in team channel (#team-general or #team-standups)
+- Multiple lists can be added per team
+- Each list can only be added once (unique constraint)
 
 ---
 
-### `/remove-list <list_id>`
+### `/remove-project-list`
 
-**Description**: Remove a ClickUp list from project scope (admin only).
+**Description**: Remove a ClickUp list from team tracking.
 
-**Who can use**: Admins only
+**Who can use**: Team Leads and Admins
 
 **Parameters**:
 - `list_id` (required): The ClickUp list ID to remove
 
 **What it does**:
-1. Removes list from `project_lists` table
-2. Tasks from this list will no longer appear in `/my-tasks`
+1. Deactivates list in `clickup_lists` table
+2. Tasks from this list will no longer appear in `/my-tasks` or `/team-report`
 3. Confirms successful removal
 
 **Admin Experience**:
 ```
-Admin: /remove-list list_id:123456789
+Admin: /remove-project-list list_id:901112661012
 
-Bot: ✅ Removed ClickUp list from project scope
-     List ID: 123456789
+Bot: ✅ Project List Removed
+     List 901112661012 has been deactivated.
+     
+     Team members will no longer see tasks from this 
+     list in /my-tasks.
 ```
 
 ---
 
-### `/list-lists`
+### `/list-project-lists`
 
-**Description**: View all configured ClickUp lists (admin only).
+**Description**: View all configured ClickUp lists for your team.
 
 **Who can use**: Admins only
 
 **Parameters**: None
 
 **What it does**:
-1. Fetches all lists from `project_lists` table
-2. Displays list names and IDs
-3. Shows which lists are active
+1. Fetches lists from `clickup_lists` table
+2. Displays list IDs and names by team
+3. Shows which lists are active/inactive
 
 **Admin Experience**:
 ```
-Admin: /list-lists
+Admin: /list-project-lists
 
-Bot: 📋 Configured ClickUp Lists
+Bot: 📋 All Project Lists
+     Configured ClickUp lists by team
      
-     1. Engineering Tasks (ID: 123456789)
-     2. Design Tasks (ID: 987654321)
-     3. Product Tasks (ID: 456789123)
+     Engineering (2 lists)
+     • 901112661012 - Sprint Tasks
+     • 901112661013 - Backlog
      
-     Total: 3 lists
+     Product (1 list)
+     • 901112661014 - Feature Requests
+```
+
+**Team-Specific View**:
+```
+Team Lead: /list-project-lists team_name:Engineering
+
+Bot: 📋 Engineering Project Lists (2)
+     
+     Sprint Tasks
+     ID: 901112661012
+     Status: ✅ Active
+     
+     Backlog
+     ID: 901112661013
+     Description: Long-term tasks
+     Status: ✅ Active
 ```
 
 ---
