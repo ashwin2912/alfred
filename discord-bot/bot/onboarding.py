@@ -60,6 +60,13 @@ class OnboardingModal(discord.ui.Modal, title="Team Onboarding"):
         await interaction.response.defer(ephemeral=True)
 
         try:
+            # Check if user already has a pending request
+            existing_pending = (
+                self.team_service.data_service.get_pending_onboarding_by_discord_id(
+                    interaction.user.id
+                )
+            )
+
             # Create pending onboarding request
             onboarding_data = PendingOnboardingCreate(
                 discord_id=interaction.user.id,
@@ -71,10 +78,21 @@ class OnboardingModal(discord.ui.Modal, title="Team Onboarding"):
                 bio=self.bio.value,
             )
 
-            # Save to database
-            pending = self.team_service.data_service.create_pending_onboarding(
-                onboarding_data
-            )
+            # If existing pending request, update it instead of creating new
+            if existing_pending and existing_pending.status.value == "pending":
+                logger.info(f"Updating existing pending request: {existing_pending.id}")
+                # Delete old request and create new one (simpler than update)
+                self.team_service.data_service.client.table(
+                    "pending_onboarding"
+                ).delete().eq("id", str(existing_pending.id)).execute()
+                pending = self.team_service.data_service.create_pending_onboarding(
+                    onboarding_data
+                )
+            else:
+                # Save to database
+                pending = self.team_service.data_service.create_pending_onboarding(
+                    onboarding_data
+                )
 
             logger.info(
                 f"Onboarding request created: {pending.id} for {interaction.user}"
@@ -171,20 +189,7 @@ class OnboardingView(discord.ui.View):
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
         """Open onboarding modal."""
-        # Check if user already has pending request
-        existing = self.team_service.data_service.get_pending_onboarding_by_discord_id(
-            interaction.user.id
-        )
-
-        if existing:
-            await interaction.response.send_message(
-                f"⚠️ You already have a pending onboarding request (ID: {existing.id}).\n"
-                "Please wait for admin approval.",
-                ephemeral=True,
-            )
-            return
-
-        # Check if user is already onboarded
+        # Check if user is already onboarded (approved)
         member = self.team_service.get_member_by_discord_id(interaction.user.id)
         if member:
             await interaction.response.send_message(
@@ -193,6 +198,7 @@ class OnboardingView(discord.ui.View):
             )
             return
 
+        # Allow resubmission - old pending request will be replaced
         # Show modal
         modal = OnboardingModal(self.team_service)
         await interaction.response.send_modal(modal)
@@ -217,18 +223,83 @@ class TeamSelectionView(discord.ui.View):
         self.original_message = original_message
         self.selected_team = None
 
-    @discord.ui.select(
-        placeholder="Select Team",
-        options=[
-            discord.SelectOption(label="Engineering", value="Engineering", emoji="⚙️"),
-            discord.SelectOption(label="Product", value="Product", emoji="📱"),
-            discord.SelectOption(label="Business", value="Business", emoji="💼"),
-        ],
-    )
-    async def team_select(
-        self, interaction: discord.Interaction, select: discord.ui.Select
-    ):
+        # Load teams from database dynamically
+        self._setup_team_select()
+
+    def _setup_team_select(self):
+        """Setup team select dropdown with teams from database."""
+        try:
+            # Get all teams from database
+            from data_service.client import DataService
+
+            # Query teams table
+            teams_response = (
+                self.team_service.data_service.client.table("teams")
+                .select("name")
+                .execute()
+            )
+
+            # Build options from database teams
+            options = []
+            team_emojis = {
+                "Engineering": "⚙️",
+                "Product": "📱",
+                "Business": "💼",
+                "Data": "📊",
+                "AI": "🤖",
+                "Marketing": "📢",
+                "Sales": "💰",
+            }
+
+            for team in teams_response.data:
+                team_name = team["name"]
+                emoji = team_emojis.get(team_name, "👥")
+                options.append(
+                    discord.SelectOption(label=team_name, value=team_name, emoji=emoji)
+                )
+
+            # Always add "None" option at the end
+            options.append(
+                discord.SelectOption(label="None (No Team)", value="None", emoji="➖")
+            )
+
+            # Create the select menu
+            select = discord.ui.Select(
+                placeholder="Select Team (or None)",
+                options=options,
+                custom_id="team_select",
+            )
+            select.callback = self.team_select
+            self.add_item(select)
+
+        except Exception as e:
+            logger.error(f"Error loading teams for dropdown: {e}")
+            # Fallback to default teams
+            select = discord.ui.Select(
+                placeholder="Select Team (or None)",
+                options=[
+                    discord.SelectOption(
+                        label="Engineering", value="Engineering", emoji="⚙️"
+                    ),
+                    discord.SelectOption(label="Product", value="Product", emoji="📱"),
+                    discord.SelectOption(
+                        label="Business", value="Business", emoji="💼"
+                    ),
+                    discord.SelectOption(
+                        label="None (No Team)", value="None", emoji="➖"
+                    ),
+                ],
+                custom_id="team_select",
+            )
+            select.callback = self.team_select
+            self.add_item(select)
+
+    async def team_select(self, interaction: discord.Interaction):
         """Handle team selection."""
+        # Get the select component
+        select = [
+            item for item in self.children if isinstance(item, discord.ui.Select)
+        ][0]
         self.selected_team = select.values[0]
         logger.info(f"Team selected: {self.selected_team}")
 
@@ -379,7 +450,8 @@ class RoleInputModal(discord.ui.Modal, title="Assign Role"):
             doc_id = None
             roster_added = False
 
-            if self.docs_service.is_available():
+            # Only create team-specific resources if a team was assigned
+            if team != "None" and self.docs_service.is_available():
                 try:
                     # Create member profile in Team Management folder
                     member_data = {
@@ -400,29 +472,49 @@ class RoleInputModal(discord.ui.Modal, title="Assign Role"):
 
                         # Get team from database to get roster sheet ID
                         db_team = self.team_service.data_service.get_team_by_name(team)
-                        if db_team and db_team.roster_sheet_id:
-                            # Add to team roster
+                        if db_team:
+                            # Add member to team via team_memberships table
                             try:
-                                roster_added = self.docs_service.add_member_to_roster(
-                                    roster_sheet_id=db_team.roster_sheet_id,
-                                    member_name=pending.name,
-                                    discord_username=pending.discord_username,
-                                    email=pending.email,
-                                    role=role or "TBD",
-                                    profile_url=doc_url,
+                                self.team_service.data_service.add_member_to_team(
+                                    new_member.id, db_team.id, role=role
                                 )
-                                if roster_added:
-                                    logger.info(
-                                        f"Added {pending.name} to {team} roster"
-                                    )
+                                logger.info(
+                                    f"Added {pending.name} to team {team} in database"
+                                )
                             except Exception as e:
-                                logger.error(f"Error adding to roster: {e}")
+                                logger.error(f"Error adding to team_memberships: {e}")
+
+                            # Add to team roster spreadsheet
+                            if db_team.roster_sheet_id:
+                                try:
+                                    roster_added = (
+                                        self.docs_service.add_member_to_roster(
+                                            roster_sheet_id=db_team.roster_sheet_id,
+                                            member_name=pending.name,
+                                            discord_username=pending.discord_username,
+                                            email=pending.email,
+                                            role=role or "TBD",
+                                            profile_url=doc_url,
+                                        )
+                                    )
+                                    if roster_added:
+                                        logger.info(
+                                            f"Added {pending.name} to {team} roster"
+                                        )
+                                except Exception as e:
+                                    logger.error(f"Error adding to roster: {e}")
+                            else:
+                                logger.warning(
+                                    f"Team {team} does not have roster_sheet_id set"
+                                )
                         else:
-                            logger.warning(
-                                f"Team {team} does not have roster_sheet_id set"
-                            )
+                            logger.warning(f"Team {team} not found in database")
                 except Exception as e:
                     logger.error(f"Error creating Google Doc: {e}")
+            elif team == "None":
+                logger.info(
+                    f"No team assigned to {pending.name}, skipping team-specific setup"
+                )
 
             # Update the approval message
             original_embed = self.original_message.embeds[0]
@@ -488,30 +580,37 @@ class RoleInputModal(discord.ui.Modal, title="Assign Role"):
 
             # Assign Discord roles based on team
             role_assigned = False
-            try:
-                guild = interaction.guild
-                member = guild.get_member(self.user_id)
-                if member:
-                    team_role = discord.utils.get(guild.roles, name=team)
-                    if team_role:
-                        await member.add_roles(team_role)
-                        role_assigned = True
-                        logger.info(f"Assigned {team} role to {member.name}")
-                    else:
-                        logger.warning(f"Role '{team}' not found in guild")
-            except Exception as e:
-                logger.error(f"Error assigning Discord role: {e}")
+            if team != "None":
+                try:
+                    guild = interaction.guild
+                    member = guild.get_member(self.user_id)
+                    if member:
+                        team_role = discord.utils.get(guild.roles, name=team)
+                        if team_role:
+                            await member.add_roles(team_role)
+                            role_assigned = True
+                            logger.info(f"Assigned {team} role to {member.name}")
+                        else:
+                            logger.warning(f"Role '{team}' not found in guild")
+                except Exception as e:
+                    logger.error(f"Error assigning Discord role: {e}")
 
-            if role_assigned:
-                admin_checklist.add_field(
-                    name="4️⃣ Discord Roles",
-                    value=f"✅ Assigned {team} role",
-                    inline=False,
-                )
+                if role_assigned:
+                    admin_checklist.add_field(
+                        name="4️⃣ Discord Roles",
+                        value=f"✅ Assigned {team} role",
+                        inline=False,
+                    )
+                else:
+                    admin_checklist.add_field(
+                        name="4️⃣ Discord Roles",
+                        value=f"⚠️ Could not find '{team}' role - assign manually",
+                        inline=False,
+                    )
             else:
                 admin_checklist.add_field(
                     name="4️⃣ Discord Roles",
-                    value=f"⚠️ Could not find '{team}' role - assign manually",
+                    value="➖ No team assigned - use `/add-to-team` later",
                     inline=False,
                 )
 
@@ -533,32 +632,53 @@ class RoleInputModal(discord.ui.Modal, title="Assign Role"):
             # Notify the user
             try:
                 discord_user = await interaction.client.fetch_user(self.user_id)
-                user_embed = discord.Embed(
-                    title="🎉 Welcome to the Team!",
-                    description="Your onboarding request has been approved!",
-                    color=discord.Color.green(),
-                )
 
-                user_embed.add_field(
-                    name="Your Assignment",
-                    value=f"**Team:** {team}\n**Role:** {role if role else 'To be assigned'}",
-                    inline=False,
-                )
+                if team != "None":
+                    user_embed = discord.Embed(
+                        title="🎉 Welcome to the Team!",
+                        description="Your onboarding request has been approved!",
+                        color=discord.Color.green(),
+                    )
 
-                next_steps = "1. You'll be added to ClickUp\n"
+                    user_embed.add_field(
+                        name="Your Assignment",
+                        value=f"**Team:** {team}\n**Role:** {role if role else 'To be assigned'}",
+                        inline=False,
+                    )
 
-                if role_assigned:
-                    next_steps += f"2. ✅ You've been assigned the {team} role\n"
+                    next_steps = "1. You'll be added to ClickUp\n"
+
+                    if role_assigned:
+                        next_steps += f"2. ✅ You've been assigned the {team} role\n"
+                    else:
+                        next_steps += "2. You'll get team role access soon\n"
+
+                    next_steps += "3. Use `/setup` in #alfred to view your profile"
+
+                    user_embed.add_field(
+                        name="What's Next?",
+                        value=next_steps,
+                        inline=False,
+                    )
                 else:
-                    next_steps += "2. You'll get team role access soon\n"
+                    # No team assigned
+                    user_embed = discord.Embed(
+                        title="✅ Onboarding Approved!",
+                        description="Your onboarding request has been approved. You'll be assigned to a team soon.",
+                        color=discord.Color.green(),
+                    )
 
-                next_steps += "3. Use `/setup` in #alfred to view your profile"
+                    next_steps = (
+                        "1. Your account has been created\n"
+                        "2. You'll be assigned to a team by an admin\n"
+                        "3. Use `/setup` in #alfred to view your profile"
+                    )
 
-                user_embed.add_field(
-                    name="What's Next?",
-                    value=next_steps,
-                    inline=False,
-                )
+                    user_embed.add_field(
+                        name="What's Next?",
+                        value=next_steps,
+                        inline=False,
+                    )
 
                 user_embed.set_footer(text="Looking forward to working with you! 🚀")
 
@@ -587,32 +707,178 @@ class ApprovalView(discord.ui.View):
         self.team_service = team_service
         self.docs_service = docs_service
 
-    @discord.ui.button(label="✅ Approve & Assign", style=discord.ButtonStyle.green)
+    @discord.ui.button(label="✅ Approve", style=discord.ButtonStyle.green)
     async def approve(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
-        """Show team selection view."""
+        """Approve the onboarding request (no team assignment yet)."""
+        await interaction.response.defer(ephemeral=True)
+
         try:
             logger.info(f"Approve button clicked by {interaction.user}")
 
-            # Show team selection view
-            view = TeamSelectionView(
-                self.request_id,
-                self.user_id,
-                self.team_service,
-                self.docs_service,
-                interaction.message,
+            # Get the pending request
+            pending = self.team_service.data_service.get_pending_onboarding(
+                self.request_id
+            )
+            if not pending:
+                await interaction.followup.send(
+                    "❌ Onboarding request not found.", ephemeral=True
+                )
+                return
+
+            if pending.status.value != "pending":
+                await interaction.followup.send(
+                    f"⚠️ This request has already been {pending.status.value}.",
+                    ephemeral=True,
+                )
+                return
+
+            # Get admin's team member record
+            admin_member = self.team_service.get_member_by_discord_id(
+                interaction.user.id
+            )
+            if not admin_member:
+                await interaction.followup.send(
+                    "❌ Could not find your admin profile. You need to be onboarded first.",
+                    ephemeral=True,
+                )
+                return
+
+            # Approve in database
+            import os
+            from uuid import uuid4
+
+            from data_service.models import TeamMemberCreate
+
+            approval = OnboardingApproval(request_id=self.request_id, approved=True)
+            self.team_service.data_service.approve_onboarding(approval, admin_member.id)
+
+            # Create Supabase auth user
+            supabase_user_id = None
+            temp_password = None
+            try:
+                supabase_user_id, temp_password = (
+                    self.team_service.data_service.create_supabase_user(
+                        email=pending.email, name=pending.name
+                    )
+                )
+                logger.info(f"Created Supabase user: {supabase_user_id}")
+            except Exception as e:
+                logger.error(f"Error creating Supabase user: {e}")
+                supabase_user_id = uuid4()
+
+            # Create team_members record (no team assigned yet)
+            team_member_data = TeamMemberCreate(
+                user_id=supabase_user_id,
+                discord_id=pending.discord_id,
+                discord_username=pending.discord_username,
+                name=pending.name,
+                email=pending.email,
+                phone=pending.phone,
+                bio=pending.bio,
             )
 
-            await interaction.response.send_message(
-                "Please select the team:", view=view, ephemeral=True
+            new_member = self.team_service.data_service.create_team_member(
+                team_member_data
             )
-            logger.info(f"Team selection view sent")
+            logger.info(f"Created team_members record: {new_member.id}")
+
+            # Create Google Doc profile in main Team Management folder
+            doc_url = None
+            doc_id = None
+            if self.docs_service.is_available():
+                try:
+                    member_data = {
+                        "name": pending.name,
+                        "email": pending.email,
+                        "phone": pending.phone or "Not provided",
+                        "team": "Unassigned",
+                        "role": "To be assigned",
+                        "bio": pending.bio or "No bio provided",
+                    }
+                    profile_result = self.docs_service.create_team_member_profile(
+                        member_data, None
+                    )
+                    if profile_result:
+                        doc_url = profile_result["url"]
+                        doc_id = profile_result["doc_id"]
+                        logger.info(f"Created Google Doc profile: {doc_url}")
+
+                        # Update team_members with profile info
+                        self.team_service.data_service.client.table(
+                            "team_members"
+                        ).update({"profile_doc_id": doc_id, "profile_url": doc_url}).eq(
+                            "id", str(new_member.id)
+                        ).execute()
+
+                        # Add to main roster spreadsheet
+                        main_roster_id = os.getenv("GOOGLE_MAIN_ROSTER_SHEET_ID")
+                        if main_roster_id:
+                            try:
+                                self.docs_service.add_member_to_roster(
+                                    roster_sheet_id=main_roster_id,
+                                    member_name=pending.name,
+                                    discord_username=pending.discord_username,
+                                    email=pending.email,
+                                    role="To be assigned",
+                                    profile_url=doc_url,
+                                )
+                                logger.info(f"Added {pending.name} to main roster")
+                            except Exception as e:
+                                logger.error(f"Error adding to main roster: {e}")
+                except Exception as e:
+                    logger.error(f"Error creating Google Doc: {e}")
+
+            # Update approval message
+            original_embed = interaction.message.embeds[0]
+            original_embed.color = discord.Color.green()
+            original_embed.title = f"✅ Approved by {interaction.user.name}"
+            if doc_url:
+                original_embed.add_field(
+                    name="📄 Profile Created",
+                    value=f"[View Profile Document]({doc_url})",
+                    inline=False,
+                )
+            original_embed.add_field(
+                name="⏳ Next Step",
+                value="Admin should run `/add-to-team` to assign this user to a team",
+                inline=False,
+            )
+
+            await interaction.message.edit(embed=original_embed, view=None)
+
+            # Send welcome DM to user
+            try:
+                discord_user = await interaction.client.fetch_user(self.user_id)
+                welcome_msg = (
+                    f"🎉 **Welcome to the team, {pending.name}!**\n\n"
+                    f"Your onboarding request has been approved!\n\n"
+                )
+                if doc_url:
+                    welcome_msg += f"📄 **Your Profile:** {doc_url}\n\n"
+                if temp_password:
+                    welcome_msg += (
+                        f"🔑 **Temporary Password:** `{temp_password}`\n"
+                        f"Please change this after your first login.\n\n"
+                    )
+                welcome_msg += (
+                    f"⏳ **Next Steps:**\n"
+                    f"An admin will assign you to a team soon. You'll receive another notification when that happens.\n\n"
+                    f"In the meantime, feel free to explore the server!"
+                )
+                await discord_user.send(welcome_msg)
+            except Exception as e:
+                logger.warning(f"Could not DM user {self.user_id}: {e}")
+
+            await interaction.followup.send(
+                "✅ User approved successfully! Use `/add-to-team` to assign them to a team.",
+                ephemeral=True,
+            )
+
         except Exception as e:
             logger.error(f"Error in approve button: {e}", exc_info=True)
-            await interaction.response.send_message(
-                f"❌ Error: {str(e)}", ephemeral=True
-            )
+            await interaction.followup.send(f"❌ Error: {str(e)}", ephemeral=True)
 
     @discord.ui.button(label="❌ Reject", style=discord.ButtonStyle.red)
     async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):

@@ -59,13 +59,10 @@ class DataService:
         """
         try:
             # Convert Pydantic model to dict for Supabase
-            member_data = member.model_dump(mode="json")
+            member_data = member.model_dump(mode="json", exclude_none=True)
 
             # Convert UUID to string for Supabase
             member_data["user_id"] = str(member_data["user_id"])
-
-            # Convert skills list to JSON
-            member_data["skills"] = [skill for skill in member_data["skills"]]
 
             response = self.client.table("team_members").insert(member_data).execute()
 
@@ -276,60 +273,16 @@ class DataService:
 
     # Utility methods for Discord bot
 
-    def get_members_with_skill(self, skill_name: str) -> List[TeamMember]:
-        """
-        Get team members who have a specific skill.
+    # DEPRECATED: Skills and availability_hours fields removed from schema
+    # def get_members_with_skill(self, skill_name: str) -> List[TeamMember]:
+    #     """Get team members who have a specific skill."""
+    #     # This method is disabled because 'skills' field was removed from team_members table
+    #     raise NotImplementedError("Skills field has been removed from the schema")
 
-        Args:
-            skill_name: Name of the skill
-
-        Returns:
-            List of team members with that skill
-        """
-        try:
-            # Note: This uses JSONB query - may need adjustment for PostgreSQL
-            response = (
-                self.client.table("team_members")
-                .select("*")
-                .contains("skills", [{"name": skill_name}])
-                .execute()
-            )
-
-            return [TeamMember(**member) for member in response.data]
-
-        except Exception as e:
-            # Fallback: fetch all and filter in Python
-            all_members = self.list_team_members(limit=1000)
-            return [
-                member
-                for member in all_members
-                if any(
-                    skill.name.lower() == skill_name.lower() for skill in member.skills
-                )
-            ]
-
-    def get_available_members(self, min_hours: int = 10) -> List[TeamMember]:
-        """
-        Get team members with availability above threshold.
-
-        Args:
-            min_hours: Minimum availability hours
-
-        Returns:
-            List of available team members
-        """
-        try:
-            response = (
-                self.client.table("team_members")
-                .select("*")
-                .gte("availability_hours", min_hours)
-                .execute()
-            )
-
-            return [TeamMember(**member) for member in response.data]
-
-        except Exception as e:
-            raise Exception(f"Failed to get available members: {str(e)}")
+    # def get_available_members(self, min_hours: int = 10) -> List[TeamMember]:
+    #     """Get team members with availability above threshold."""
+    #     # This method is disabled because 'availability_hours' field was removed from team_members table
+    #     raise NotImplementedError("Availability hours field has been removed from the schema")
 
     def get_team_member_by_discord_id(self, discord_id: int) -> Optional[TeamMember]:
         """
@@ -649,6 +602,464 @@ class DataService:
         alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
         password = "".join(secrets.choice(alphabet) for _ in range(length))
         return password
+
+    # ClickUp Lists Management
+
+    def add_clickup_list(
+        self,
+        clickup_list_id: str,
+        list_name: str,
+        team_id: UUID,
+        description: Optional[str] = None,
+        clickup_folder_id: Optional[str] = None,
+        clickup_space_id: Optional[str] = None,
+    ) -> dict:
+        """
+        Add a ClickUp list to track for a team.
+
+        Args:
+            clickup_list_id: ClickUp list ID from API
+            list_name: Name of the list
+            team_id: UUID of the team this list belongs to
+            description: Optional description of the list
+            clickup_folder_id: Optional ClickUp folder ID
+            clickup_space_id: Optional ClickUp space ID
+
+        Returns:
+            Created clickup_lists record
+        """
+        try:
+            # Build insert data with only non-None values to avoid schema cache issues
+            insert_data = {
+                "clickup_list_id": clickup_list_id,
+                "list_name": list_name,
+                "team_id": str(team_id),
+                "is_active": True,
+            }
+
+            if description is not None:
+                insert_data["description"] = description
+
+            response = self.client.table("clickup_lists").insert(insert_data).execute()
+            return response.data[0] if response.data else None
+        except Exception as e:
+            raise Exception(f"Failed to add ClickUp list: {str(e)}")
+
+    def get_team_clickup_lists(self, team_id: UUID) -> List[dict]:
+        """
+        Get all active ClickUp lists for a team.
+
+        Args:
+            team_id: UUID of the team
+
+        Returns:
+            List of clickup_lists records
+        """
+        try:
+            response = (
+                self.client.table("clickup_lists")
+                .select("*")
+                .eq("team_id", str(team_id))
+                .eq("is_active", True)
+                .order("list_name")
+                .execute()
+            )
+            return response.data if response.data else []
+        except Exception:
+            return []
+
+    def get_team_clickup_lists_by_name(self, team_name: str) -> List[dict]:
+        """
+        Get all active ClickUp lists for a team by team name.
+
+        Args:
+            team_name: Name of the team (e.g., "Engineering", "Product")
+
+        Returns:
+            List of clickup_lists records with list IDs
+        """
+        try:
+            # First get the team
+            team_response = (
+                self.client.table("teams").select("id").eq("name", team_name).execute()
+            )
+
+            if not team_response.data:
+                return []
+
+            team_id = team_response.data[0]["id"]
+
+            # Then get lists for that team
+            response = (
+                self.client.table("clickup_lists")
+                .select("*")
+                .eq("team_id", team_id)
+                .eq("is_active", True)
+                .order("list_name")
+                .execute()
+            )
+            return response.data if response.data else []
+        except Exception:
+            return []
+
+    def get_team_list_ids(self, team_id: UUID) -> List[str]:
+        """
+        Get all active ClickUp list IDs for a team (for filtering tasks).
+
+        Args:
+            team_id: UUID of the team
+
+        Returns:
+            List of ClickUp list ID strings
+        """
+        lists = self.get_team_clickup_lists(team_id)
+        return [lst["clickup_list_id"] for lst in lists]
+
+    def get_team_list_ids_by_name(self, team_name: str) -> List[str]:
+        """
+        Get all active ClickUp list IDs for a team by name.
+
+        Args:
+            team_name: Name of the team
+
+        Returns:
+            List of ClickUp list ID strings
+        """
+        lists = self.get_team_clickup_lists_by_name(team_name)
+        return [lst["clickup_list_id"] for lst in lists]
+
+    def deactivate_clickup_list(self, clickup_list_id: str) -> bool:
+        """
+        Deactivate a ClickUp list (soft delete).
+
+        Args:
+            clickup_list_id: ClickUp list ID to deactivate
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            response = (
+                self.client.table("clickup_lists")
+                .update({"is_active": False})
+                .eq("clickup_list_id", clickup_list_id)
+                .execute()
+            )
+            return len(response.data) > 0 if response.data else False
+        except Exception:
+            return False
+
+    def reactivate_clickup_list(self, clickup_list_id: str) -> bool:
+        """
+        Reactivate a ClickUp list.
+
+        Args:
+            clickup_list_id: ClickUp list ID to reactivate
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            response = (
+                self.client.table("clickup_lists")
+                .update({"is_active": True})
+                .eq("clickup_list_id", clickup_list_id)
+                .execute()
+            )
+            return len(response.data) > 0 if response.data else False
+        except Exception:
+            return False
+
+    # Team Management Methods
+
+    def create_team(
+        self,
+        name: str,
+        description: Optional[str] = None,
+        drive_folder_id: Optional[str] = None,
+        overview_doc_id: Optional[str] = None,
+        overview_doc_url: Optional[str] = None,
+        roster_sheet_id: Optional[str] = None,
+        roster_sheet_url: Optional[str] = None,
+        discord_role_id: Optional[int] = None,
+        discord_manager_role_id: Optional[int] = None,
+        discord_general_channel_id: Optional[int] = None,
+        discord_standup_channel_id: Optional[int] = None,
+    ) -> Team:
+        """
+        Create a new team with all integration IDs.
+
+        Args:
+            name: Team name
+            description: Team description
+            drive_folder_id: Google Drive folder ID
+            overview_doc_id: Team overview document ID
+            overview_doc_url: Team overview document URL
+            roster_sheet_id: Team roster spreadsheet ID
+            roster_sheet_url: Team roster spreadsheet URL
+            discord_role_id: Discord role ID for this team
+            discord_manager_role_id: Discord manager role ID for team leads
+            discord_general_channel_id: Discord general channel ID
+            discord_standup_channel_id: Discord standup channel ID
+
+        Returns:
+            Created team
+
+        Raises:
+            Exception if creation fails
+        """
+        try:
+            team_data = {
+                "name": name,
+                "description": description,
+                "drive_folder_id": drive_folder_id,
+                "overview_doc_id": overview_doc_id,
+                "overview_doc_url": overview_doc_url,
+                "roster_sheet_id": roster_sheet_id,
+                "roster_sheet_url": roster_sheet_url,
+                "discord_role_id": discord_role_id,
+                "discord_manager_role_id": discord_manager_role_id,
+                "discord_general_channel_id": discord_general_channel_id,
+                "discord_standup_channel_id": discord_standup_channel_id,
+            }
+
+            # Remove None values
+            team_data = {k: v for k, v in team_data.items() if v is not None}
+
+            response = self.client.table("teams").insert(team_data).execute()
+
+            if not response.data:
+                raise Exception("No data returned from insert")
+
+            return Team(**response.data[0])
+
+        except Exception as e:
+            raise Exception(f"Failed to create team: {str(e)}")
+
+    def update_team_discord_ids(
+        self,
+        team_id: UUID,
+        role_id: Optional[int] = None,
+        general_channel_id: Optional[int] = None,
+        standup_channel_id: Optional[int] = None,
+    ) -> Team:
+        """
+        Update Discord integration IDs for a team.
+
+        Args:
+            team_id: Team UUID
+            role_id: Discord role ID
+            general_channel_id: Discord general channel ID
+            standup_channel_id: Discord standup channel ID
+
+        Returns:
+            Updated team
+
+        Raises:
+            Exception if update fails
+        """
+        try:
+            update_data = {}
+            if role_id is not None:
+                update_data["discord_role_id"] = role_id
+            if general_channel_id is not None:
+                update_data["discord_general_channel_id"] = general_channel_id
+            if standup_channel_id is not None:
+                update_data["discord_standup_channel_id"] = standup_channel_id
+
+            if not update_data:
+                raise ValueError("No Discord IDs provided")
+
+            response = (
+                self.client.table("teams")
+                .update(update_data)
+                .eq("id", str(team_id))
+                .execute()
+            )
+
+            if not response.data:
+                raise Exception("Team not found")
+
+            return Team(**response.data[0])
+
+        except Exception as e:
+            raise Exception(f"Failed to update team Discord IDs: {str(e)}")
+
+    def update_team_clickup_workspace(
+        self,
+        team_id: UUID,
+        workspace_id: Optional[str] = None,
+        space_id: Optional[str] = None,
+        workspace_name: Optional[str] = None,
+    ) -> Team:
+        """
+        Update ClickUp workspace information for a team.
+
+        Args:
+            team_id: Team UUID
+            workspace_id: ClickUp workspace ID (optional)
+            space_id: ClickUp space ID (optional)
+            workspace_name: Workspace name for display (optional)
+
+        Returns:
+            Updated team
+
+        Raises:
+            Exception if update fails
+        """
+        try:
+            update_data = {}
+            if workspace_id is not None:
+                update_data["clickup_workspace_id"] = workspace_id
+            if space_id is not None:
+                update_data["clickup_space_id"] = space_id
+            if workspace_name is not None:
+                update_data["clickup_workspace_name"] = workspace_name
+
+            response = (
+                self.client.table("teams")
+                .update(update_data)
+                .eq("id", str(team_id))
+                .execute()
+            )
+
+            if not response.data:
+                raise Exception("Team not found")
+
+            return Team(**response.data[0])
+
+        except Exception as e:
+            raise Exception(f"Failed to update team ClickUp workspace: {str(e)}")
+
+    def add_member_to_team(
+        self, member_id: UUID, team_id: UUID, role: Optional[str] = None
+    ) -> TeamMembership:
+        """
+        Add a member to a team (creates team_memberships record).
+
+        Args:
+            member_id: Team member UUID
+            team_id: Team UUID
+            role: Role within the team (optional, e.g., "Senior Engineer")
+
+        Returns:
+            Created team membership
+
+        Raises:
+            Exception if creation fails
+        """
+        try:
+            membership_data = {
+                "member_id": str(member_id),
+                "team_id": str(team_id),
+                "role": role,
+                "is_active": True,
+            }
+
+            response = (
+                self.client.table("team_memberships").insert(membership_data).execute()
+            )
+
+            if not response.data:
+                raise Exception("No data returned from insert")
+
+            return TeamMembership(**response.data[0])
+
+        except Exception as e:
+            raise Exception(f"Failed to add member to team: {str(e)}")
+
+    def remove_member_from_team(self, member_id: UUID, team_id: UUID) -> bool:
+        """
+        Remove a member from a team (soft delete).
+
+        Args:
+            member_id: Team member UUID
+            team_id: Team UUID
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            response = (
+                self.client.table("team_memberships")
+                .update({"is_active": False})
+                .eq("member_id", str(member_id))
+                .eq("team_id", str(team_id))
+                .execute()
+            )
+            return len(response.data) > 0 if response.data else False
+        except Exception:
+            return False
+
+    def get_team_members(
+        self, team_id: UUID, active_only: bool = True
+    ) -> List[TeamMember]:
+        """
+        Get all members of a team.
+
+        Args:
+            team_id: Team UUID
+            active_only: Whether to only return active memberships (default True)
+
+        Returns:
+            List of team members
+        """
+        try:
+            # Use the database function we created in the migration
+            query = self.client.rpc(
+                "get_team_member_list", {"team_id_param": str(team_id)}
+            )
+
+            response = query.execute()
+
+            if not response.data:
+                return []
+
+            # Convert to TeamMember objects
+            members = []
+            for row in response.data:
+                # Fetch full member data
+                member = self.get_team_member(UUID(row["member_id"]))
+                if member:
+                    members.append(member)
+
+            return members
+
+        except Exception as e:
+            raise Exception(f"Failed to get team members: {str(e)}")
+
+    def get_member_teams(self, member_id: UUID) -> List[Team]:
+        """
+        Get all teams a member belongs to.
+
+        Args:
+            member_id: Team member UUID
+
+        Returns:
+            List of teams
+        """
+        try:
+            # Use the database function we created in the migration
+            query = self.client.rpc(
+                "get_member_teams", {"member_id_param": str(member_id)}
+            )
+
+            response = query.execute()
+
+            if not response.data:
+                return []
+
+            # Convert to Team objects
+            teams = []
+            for row in response.data:
+                team = self.get_team_by_name(row["team_name"])
+                if team:
+                    teams.append(team)
+
+            return teams
+
+        except Exception as e:
+            raise Exception(f"Failed to get member teams: {str(e)}")
 
 
 def create_data_service(

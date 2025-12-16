@@ -7,9 +7,18 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from bot.admin_commands import AdminCommands
 from bot.config import DISCORD_BOT_TOKEN, DISCORD_GUILD_ID
 from bot.onboarding import OnboardingView
-from bot.services import ClickUpService, DocsService, TeamMemberService
+from bot.project_planning import ProjectPlanningCommands
+from bot.services import (
+    ClickUpService,
+    DiscordTeamService,
+    DocsService,
+    TeamMemberService,
+)
+from bot.task_management import TaskManagementCommands
+from bot.team_management_commands import TeamManagementCommands
 
 # Set up logging
 logging.basicConfig(
@@ -30,6 +39,7 @@ class TeamBot(commands.Bot):
 
         self.team_service = TeamMemberService()
         self.docs_service = DocsService()
+        self.discord_team_service = DiscordTeamService()
         self.guild_id = int(DISCORD_GUILD_ID) if DISCORD_GUILD_ID else None
         self.admin_channel_id = (
             int(os.getenv("DISCORD_ADMIN_CHANNEL_ID"))
@@ -42,8 +52,36 @@ class TeamBot(commands.Bot):
             else None
         )
 
+        # Initialize project planning commands
+        self.project_planning = ProjectPlanningCommands(
+            self, self.team_service, self.docs_service
+        )
+
+        # Initialize task management commands
+        self.task_management = TaskManagementCommands(self, self.team_service)
+
+        # Initialize admin commands
+        self.admin_commands = AdminCommands(self, self.team_service)
+
+        # Initialize team management commands
+        self.team_management = TeamManagementCommands(
+            self, self.team_service, self.docs_service, self.discord_team_service
+        )
+
     async def setup_hook(self):
         """Called when the bot is starting up."""
+        # Register project planning commands
+        self.project_planning.register_commands(self.tree)
+
+        # Register task management commands
+        self.task_management.register_commands(self.tree)
+
+        # Register admin commands
+        self.admin_commands.register_commands(self.tree)
+
+        # Register team management commands
+        self.team_management.register_commands(self.tree)
+
         # Sync commands globally (enables DMs)
         await self.tree.sync()
         logger.info("Synced commands globally (DMs enabled)")
@@ -169,18 +207,7 @@ async def start_onboarding(interaction: discord.Interaction):
         )
         return
 
-    # Check if they have a pending onboarding request
-    pending = bot.team_service.data_service.get_pending_onboarding_by_discord_id(
-        interaction.user.id
-    )
-    if pending:
-        await interaction.response.send_message(
-            f"⚠️ You already have a pending onboarding request (ID: {pending.id}).\n"
-            "Please wait for admin approval.",
-            ephemeral=True,
-        )
-        return
-
+    # Allow resubmission - old pending request will be replaced in OnboardingModal
     # Show onboarding modal
     from bot.onboarding import OnboardingModal
 
@@ -392,9 +419,19 @@ async def my_tasks(interaction: discord.Interaction):
         await interaction.followup.send(embed=embed, ephemeral=True)
         return
 
-    # Fetch all tasks from ClickUp
+    # Get user's team to filter by project lists
+    # If user has a team, only show tasks from configured project lists
+    list_ids = None
+    if member.team:
+        list_ids = bot.team_service.data_service.get_team_list_ids_by_name(member.team)
+        if list_ids:
+            logger.info(
+                f"Filtering tasks for {discord_username} by {len(list_ids)} project lists for team {member.team}"
+            )
+
+    # Fetch tasks from ClickUp (filtered by team lists if configured)
     clickup_service = ClickUpService(member.clickup_api_token)
-    tasks = await clickup_service.get_all_tasks(assigned_only=True)
+    tasks = await clickup_service.get_all_tasks(assigned_only=True, list_ids=list_ids)
 
     if not tasks:
         embed = discord.Embed(
@@ -406,18 +443,25 @@ async def my_tasks(interaction: discord.Interaction):
         return
 
     # Create embed with tasks
+    description = "All tasks assigned to you"
+    if list_ids:
+        description += f" from {member.team} project lists"
+    else:
+        description += " across all your ClickUp teams"
+
     embed = discord.Embed(
         title=f"📋 Your Tasks ({len(tasks)})",
-        description="All tasks assigned to you across your teams",
+        description=description,
         color=discord.Color.blue(),
     )
 
     for task in tasks[:10]:  # Limit to 10 tasks to avoid hitting embed limits
+        task_id = task.get("id", "")
         status = task.get("status", {}).get("status", "Unknown")
         priority = task.get("priority")
         due_date = task.get("due_date")
 
-        field_value = f"**Status:** {status}\n"
+        field_value = f"**ID:** `{task_id}`\n**Status:** {status}\n"
 
         if priority:
             priority_emoji = {"1": "🔴", "2": "🟡", "3": "🔵", "4": "⚪"}.get(
@@ -437,6 +481,10 @@ async def my_tasks(interaction: discord.Interaction):
         task_url = task.get("url")
         if task_url:
             field_value += f"[View Task]({task_url})"
+
+        # Add helpful hint for first task
+        if tasks.index(task) == 0:
+            field_value += f"\n\n💡 Use `/task-info {task_id}` for details"
 
         embed.add_field(
             name=task.get("name", "Untitled")[:256],
@@ -563,6 +611,30 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(
         name="/my-tasks",
         value="View all your assigned tasks across all ClickUp teams and lists",
+        inline=False,
+    )
+
+    embed.add_field(
+        name="/task-info <task_id>",
+        value="View detailed information about a specific task with comments",
+        inline=False,
+    )
+
+    embed.add_field(
+        name="/task-comment <task_id> <comment>",
+        value="Add a comment or update to a ClickUp task",
+        inline=False,
+    )
+
+    embed.add_field(
+        name="/brainstorm <idea>",
+        value="[Team Lead only] Generate AI-powered project plan from your idea",
+        inline=False,
+    )
+
+    embed.add_field(
+        name="/my-projects",
+        value="List all your project brainstorms",
         inline=False,
     )
 

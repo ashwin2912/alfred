@@ -203,7 +203,7 @@ class SetupBot(commands.Bot):
 
         # Step 3: Create Discord roles
         print("\n" + "=" * 70)
-        print("STEP 3: Create Discord Roles")
+        print("STEP 3: Create Discord Roles (Team + Team Lead)")
         print("=" * 70)
 
         # Check if bot has Manage Roles permission
@@ -215,13 +215,12 @@ class SetupBot(commands.Bot):
         else:
             for team_name, team_info in self.teams_to_create.items():
                 try:
-                    # Check if role exists
+                    # Create base team role
                     existing_role = discord.utils.get(guild.roles, name=team_name)
                     if existing_role:
                         print(f"  ⏭️  Discord role '{team_name}' already exists")
                         role_id = existing_role.id
                     else:
-                        # Create role
                         color = COLOR_MAP.get(
                             team_info["color"], discord.Color.default()
                         )
@@ -242,8 +241,30 @@ class SetupBot(commands.Bot):
                         update = TeamUpdate(discord_role_id=role_id)
                         self.team_service.data_service.update_team(team.id, update)
                         print(f"     → Updated database with Discord role ID")
+
+                    # Create Team Lead role
+                    team_lead_name = f"{team_name} Team Lead"
+                    existing_lead_role = discord.utils.get(guild.roles, name=team_lead_name)
+                    if existing_lead_role:
+                        print(f"  ⏭️  Discord role '{team_lead_name}' already exists")
+                    else:
+                        # Use same color but make it slightly different (hoisted)
+                        color = COLOR_MAP.get(
+                            team_info["color"], discord.Color.default()
+                        )
+                        new_lead_role = await guild.create_role(
+                            name=team_lead_name,
+                            color=color,
+                            mentionable=True,
+                            hoist=True,  # Display separately in member list
+                            reason="Alfred bot setup - Team Lead role",
+                        )
+                        print(
+                            f"  ✅ Created Discord role '{team_lead_name}' (Team Lead, ID: {new_lead_role.id})"
+                        )
+
                 except Exception as e:
-                    print(f"  ❌ Error creating role '{team_name}': {e}")
+                    print(f"  ❌ Error creating roles for '{team_name}': {e}")
 
         # Step 4: Initialize Google Drive folders
         print("\n" + "=" * 70)

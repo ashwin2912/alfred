@@ -716,6 +716,133 @@ Welcome to the {team_name} team!
 
         return self.append_to_sheet(spreadsheet_id, values)
 
+    def share_document(
+        self,
+        document_id: str,
+        email: str,
+        role: str = "writer",
+        send_notification: bool = False,
+    ) -> bool:
+        """
+        Share a document with a user by email.
+
+        Args:
+            document_id: Document or file ID
+            email: Email address to share with
+            role: Permission role - "reader", "writer", "commenter" (default: "writer")
+            send_notification: Whether to send email notification (default: False)
+
+        Returns:
+            True if successful
+
+        Raises:
+            Exception if sharing fails
+        """
+        try:
+            permission = {
+                "type": "user",
+                "role": role,
+                "emailAddress": email,
+            }
+
+            self.drive_service.permissions().create(
+                fileId=document_id,
+                body=permission,
+                sendNotificationEmail=send_notification,
+                fields="id",
+            ).execute()
+
+            return True
+
+        except HttpError as e:
+            raise Exception(f"Failed to share document with {email}: {str(e)}")
+
+    def share_document_with_multiple_users(
+        self,
+        document_id: str,
+        emails: List[str],
+        role: str = "writer",
+        send_notification: bool = False,
+    ) -> Dict[str, bool]:
+        """
+        Share a document with multiple users.
+
+        Args:
+            document_id: Document or file ID
+            emails: List of email addresses to share with
+            role: Permission role - "reader", "writer", "commenter" (default: "writer")
+            send_notification: Whether to send email notifications (default: False)
+
+        Returns:
+            Dict mapping email to success status
+
+        Example:
+            >>> results = service.share_document_with_multiple_users(
+            ...     doc_id,
+            ...     ["user1@example.com", "user2@example.com"],
+            ...     role="writer"
+            ... )
+            >>> print(results)
+            {"user1@example.com": True, "user2@example.com": True}
+        """
+        results = {}
+
+        for email in emails:
+            try:
+                self.share_document(document_id, email, role, send_notification)
+                results[email] = True
+            except Exception as e:
+                print(f"Failed to share with {email}: {e}")
+                results[email] = False
+
+        return results
+
+    def remove_user_access(
+        self,
+        document_id: str,
+        email: str,
+    ) -> bool:
+        """
+        Remove a user's access to a document.
+
+        Args:
+            document_id: Document or file ID
+            email: Email address to remove
+
+        Returns:
+            True if successful
+
+        Raises:
+            Exception if removal fails
+        """
+        try:
+            # List permissions to find the permission ID for this email
+            permissions = (
+                self.drive_service.permissions()
+                .list(fileId=document_id, fields="permissions(id,emailAddress)")
+                .execute()
+            )
+
+            # Find permission ID for this email
+            permission_id = None
+            for perm in permissions.get("permissions", []):
+                if perm.get("emailAddress") == email:
+                    permission_id = perm.get("id")
+                    break
+
+            if not permission_id:
+                raise Exception(f"No permission found for {email}")
+
+            # Delete the permission
+            self.drive_service.permissions().delete(
+                fileId=document_id, permissionId=permission_id
+            ).execute()
+
+            return True
+
+        except HttpError as e:
+            raise Exception(f"Failed to remove access for {email}: {str(e)}")
+
     def _write_sheet_headers(self, spreadsheet_id: str, headers: List[str]):
         """Write headers to first row of a sheet."""
         range_name = "Sheet1!A1:Z1"

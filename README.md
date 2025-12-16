@@ -112,6 +112,7 @@ python scripts/interactive_setup.py
 - **[SETUP_GUIDE.md](SETUP_GUIDE.md)** - Complete step-by-step setup (new users)
 - **[QUICK_START.md](QUICK_START.md)** - Quick reference guide
 - **[progress.md](progress.md)** - Full feature list, roadmap, and updates
+- **[MULTI_AGENT_ARCHITECTURE.md](MULTI_AGENT_ARCHITECTURE.md)** - 🤖 Multi-agent system architecture (future vision)
 - **[discord-bot/scripts/README.md](discord-bot/scripts/README.md)** - Utility scripts
 
 ---
