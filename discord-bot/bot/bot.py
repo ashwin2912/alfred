@@ -419,14 +419,32 @@ async def my_tasks(interaction: discord.Interaction):
         await interaction.followup.send(embed=embed, ephemeral=True)
         return
 
-    # Get user's team to filter by project lists
-    # If user has a team, only show tasks from configured project lists
+    # Get team based on channel context to filter by project lists
+    # If run in a team channel, only show tasks from that team's configured lists
     list_ids = None
-    if member.team:
+    channel_team = None
+
+    # Check if current channel is a team channel
+    if interaction.channel:
+        teams = bot.team_service.data_service.list_teams()
+        for team in teams:
+            if (team.discord_general_channel_id == interaction.channel.id or
+                team.discord_standup_channel_id == interaction.channel.id):
+                channel_team = team
+                break
+
+    # Filter by channel's team if in team channel, otherwise use user's team
+    if channel_team:
+        list_ids = bot.team_service.data_service.get_team_list_ids(channel_team.id)
+        if list_ids:
+            logger.info(
+                f"Filtering tasks for {discord_username} by {len(list_ids)} project lists for channel team {channel_team.name}"
+            )
+    elif member.team:
         list_ids = bot.team_service.data_service.get_team_list_ids_by_name(member.team)
         if list_ids:
             logger.info(
-                f"Filtering tasks for {discord_username} by {len(list_ids)} project lists for team {member.team}"
+                f"Filtering tasks for {discord_username} by {len(list_ids)} project lists for user team {member.team}"
             )
 
     # Fetch tasks from ClickUp (filtered by team lists if configured)
@@ -444,8 +462,10 @@ async def my_tasks(interaction: discord.Interaction):
 
     # Create embed with tasks
     description = "All tasks assigned to you"
-    if list_ids:
-        description += f" from {member.team} project lists"
+    if channel_team and list_ids:
+        description += f" from **{channel_team.name}** team lists"
+    elif list_ids:
+        description += f" from **{member.team}** team lists"
     else:
         description += " across all your ClickUp teams"
 
