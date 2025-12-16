@@ -42,34 +42,29 @@ class Skill(BaseModel):
 
 
 class TeamMemberBase(BaseModel):
-    """Base team member model with common fields."""
+    """Base team member model with common fields - simplified schema."""
 
     email: EmailStr
     name: str
     phone: Optional[str] = None
     discord_username: Optional[str] = None
     discord_id: Optional[int] = None
-    clickup_user_id: Optional[str] = None
     clickup_api_token: Optional[str] = None
+    clickup_user_id: Optional[str] = None
     bio: Optional[str] = None
     role: Optional[str] = None
     team: Optional[str] = None
     manager_id: Optional[UUID] = None
-    timezone: str = "UTC"
-    availability_hours: int = Field(default=40, ge=0, le=168)
-    skills: List[Skill] = Field(default_factory=list)
-    preferred_tasks: List[str] = Field(default_factory=list)
-    links: Dict[str, str] = Field(default_factory=dict)
     status: MemberStatus = MemberStatus.ACTIVE
     start_date: Optional[date] = None
+    profile_doc_id: Optional[str] = None
+    profile_url: Optional[str] = None
 
 
 class TeamMemberCreate(TeamMemberBase):
     """Create team member model."""
 
     user_id: UUID  # Supabase auth user ID
-    profile_doc_id: Optional[str] = None
-    profile_url: Optional[str] = None
 
 
 class TeamMemberUpdate(BaseModel):
@@ -80,11 +75,8 @@ class TeamMemberUpdate(BaseModel):
     clickup_user_id: Optional[str] = None
     clickup_api_token: Optional[str] = None
     bio: Optional[str] = None
-    timezone: Optional[str] = None
-    availability_hours: Optional[int] = Field(default=None, ge=0, le=168)
-    skills: Optional[List[Skill]] = None
-    preferred_tasks: Optional[List[str]] = None
-    links: Optional[Dict[str, str]] = None
+    role: Optional[str] = None
+    team: Optional[str] = None
     profile_doc_id: Optional[str] = None
     profile_url: Optional[str] = None
 
@@ -94,11 +86,8 @@ class TeamMember(TeamMemberBase):
 
     id: UUID
     user_id: UUID
-    profile_doc_id: Optional[str] = None
-    profile_url: Optional[str] = None
-    onboarded_at: datetime
-    created_at: datetime
-    updated_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     class Config:
         """Pydantic config."""
@@ -138,6 +127,7 @@ class TeamBase(BaseModel):
     team_lead_id: Optional[UUID] = None
     parent_team_id: Optional[UUID] = None
     discord_role_id: Optional[int] = None
+    discord_manager_role_id: Optional[int] = None
 
 
 class TeamCreate(TeamBase):
@@ -170,6 +160,9 @@ class Team(TeamBase):
     overview_doc_url: Optional[str] = None
     roster_sheet_id: Optional[str] = None
     roster_sheet_url: Optional[str] = None
+    discord_general_channel_id: Optional[int] = None
+    discord_standup_channel_id: Optional[int] = None
+    clickup_workspace_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

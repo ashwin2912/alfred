@@ -243,12 +243,15 @@ class ClickUpService:
             except Exception:
                 return []
 
-    async def get_all_tasks(self, assigned_only: bool = True) -> list[dict]:
+    async def get_all_tasks(
+        self, assigned_only: bool = True, list_ids: Optional[list[str]] = None
+    ) -> list[dict]:
         """
         Get all tasks assigned to the authenticated user across all teams/spaces.
 
         Args:
             assigned_only: If True, only return tasks assigned to the authenticated user
+            list_ids: Optional list of ClickUp list IDs to filter by (for scoping to project lists)
 
         Returns:
             List of task dictionaries
@@ -264,36 +267,61 @@ class ClickUpService:
 
                 user_id = user_info.get("id")
 
-                # Get all teams
-                teams = await self.get_all_teams()
+                # If list_ids are provided, fetch from specific lists
+                if list_ids:
+                    for list_id in list_ids:
+                        params = {
+                            "subtasks": "true",
+                            "include_closed": "false",
+                        }
 
-                for team in teams:
-                    team_id = team.get("id")
-                    if not team_id:
-                        continue
+                        if assigned_only and user_id:
+                            params["assignees[]"] = user_id
 
-                    # Get tasks for this team using the team endpoint
-                    params = {
-                        "subtasks": "true",
-                        "include_closed": "false",
-                    }
+                        try:
+                            response = await client.get(
+                                f"{self.base_url}/list/{list_id}/task",
+                                headers=self.headers,
+                                params=params,
+                                timeout=15.0,
+                            )
 
-                    if assigned_only and user_id:
-                        params["assignees[]"] = user_id
+                            if response.status_code == 200:
+                                tasks = response.json().get("tasks", [])
+                                all_tasks.extend(tasks)
+                        except Exception:
+                            continue
+                else:
+                    # Get all teams (original behavior)
+                    teams = await self.get_all_teams()
 
-                    try:
-                        response = await client.get(
-                            f"{self.base_url}/team/{team_id}/task",
-                            headers=self.headers,
-                            params=params,
-                            timeout=15.0,
-                        )
+                    for team in teams:
+                        team_id = team.get("id")
+                        if not team_id:
+                            continue
 
-                        if response.status_code == 200:
-                            tasks = response.json().get("tasks", [])
-                            all_tasks.extend(tasks)
-                    except Exception:
-                        continue
+                        # Get tasks for this team using the team endpoint
+                        params = {
+                            "subtasks": "true",
+                            "include_closed": "false",
+                        }
+
+                        if assigned_only and user_id:
+                            params["assignees[]"] = user_id
+
+                        try:
+                            response = await client.get(
+                                f"{self.base_url}/team/{team_id}/task",
+                                headers=self.headers,
+                                params=params,
+                                timeout=15.0,
+                            )
+
+                            if response.status_code == 200:
+                                tasks = response.json().get("tasks", [])
+                                all_tasks.extend(tasks)
+                        except Exception:
+                            continue
 
                 return all_tasks
             except Exception:
@@ -330,3 +358,258 @@ class ClickUpService:
                 return []
             except Exception:
                 return []
+
+    async def get_space_tasks(
+        self, space_id: str, assigned_only: bool = False
+    ) -> list[dict]:
+        """
+        Get all tasks from a ClickUp space.
+
+        Args:
+            space_id: ClickUp space ID
+            assigned_only: If True, only return tasks assigned to the authenticated user
+
+        Returns:
+            List of task dictionaries
+        """
+        async with httpx.AsyncClient() as client:
+            try:
+                params = {
+                    "subtasks": "true",
+                    "include_closed": "false",
+                }
+
+                if assigned_only:
+                    user_info = await self.get_user_info()
+                    if user_info:
+                        params["assignees[]"] = user_info.get("id")
+
+                response = await client.get(
+                    f"{self.base_url}/space/{space_id}/task",
+                    headers=self.headers,
+                    params=params,
+                    timeout=15.0,
+                )
+
+                if response.status_code == 200:
+                    return response.json().get("tasks", [])
+                return []
+            except Exception:
+                return []
+
+    async def get_task_details(self, task_id: str) -> Optional[dict]:
+        """
+        Get detailed information about a specific task.
+
+        Args:
+            task_id: ClickUp task ID
+
+        Returns:
+            Task details dictionary with full information, or None if failed
+        """
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(
+                    f"{self.base_url}/task/{task_id}",
+                    headers=self.headers,
+                    timeout=10.0,
+                )
+
+                if response.status_code == 200:
+                    return response.json()
+                return None
+            except Exception as e:
+                print(f"Error fetching task details: {e}")
+                return None
+
+    async def get_task_comments(self, task_id: str) -> list[dict]:
+        """
+        Get all comments for a specific task.
+
+        Args:
+            task_id: ClickUp task ID
+
+        Returns:
+            List of comment dictionaries
+        """
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(
+                    f"{self.base_url}/task/{task_id}/comment",
+                    headers=self.headers,
+                    timeout=10.0,
+                )
+
+                if response.status_code == 200:
+                    return response.json().get("comments", [])
+                return []
+            except Exception as e:
+                print(f"Error fetching task comments: {e}")
+                return []
+
+    async def post_task_comment(
+        self, task_id: str, comment_text: str
+    ) -> Optional[dict]:
+        """
+        Post a comment to a ClickUp task.
+
+        Args:
+            task_id: ClickUp task ID
+            comment_text: The comment text to post
+
+        Returns:
+            Comment dictionary if successful, None otherwise
+        """
+        async with httpx.AsyncClient() as client:
+            try:
+                payload = {"comment_text": comment_text}
+
+                response = await client.post(
+                    f"{self.base_url}/task/{task_id}/comment",
+                    headers=self.headers,
+                    json=payload,
+                    timeout=10.0,
+                )
+
+                if response.status_code == 200:
+                    return response.json()
+                return None
+            except Exception as e:
+                print(f"Error posting comment: {e}")
+                return None
+
+
+class DiscordTeamService:
+    """Service for creating Discord roles and channels for teams."""
+
+    # Color mapping for Discord roles
+    COLORS = {
+        "blue": 0x3498DB,
+        "green": 0x2ECC71,
+        "red": 0xE74C3C,
+        "purple": 0x9B59B6,
+        "orange": 0xE67E22,
+        "yellow": 0xF1C40F,
+        "teal": 0x1ABC9C,
+        "pink": 0xE91E63,
+    }
+
+    async def create_team_roles(
+        self, guild, team_name: str, color: str = "blue"
+    ) -> tuple:
+        """
+        Create Discord roles for a team (member role + manager role).
+
+        Args:
+            guild: Discord guild object
+            team_name: Name of the team
+            color: Color name for the role (default: blue)
+
+        Returns:
+            Tuple of (team_role, manager_role) if successful, (None, None) otherwise
+        """
+        try:
+            import discord
+
+            color_value = self.COLORS.get(color.lower(), self.COLORS["blue"])
+
+            # Create team member role
+            team_role = await guild.create_role(
+                name=team_name,
+                color=discord.Color(color_value),
+                mentionable=True,
+                reason=f"Team role created for {team_name}",
+            )
+
+            # Create manager role (slightly different color, permissions set via channel overwrites)
+            manager_color = (
+                discord.Color(color_value).value - 0x111111
+            )  # Slightly darker
+            manager_role = await guild.create_role(
+                name=f"{team_name} Manager",
+                color=discord.Color(manager_color),
+                mentionable=True,
+                reason=f"Manager role created for {team_name}",
+            )
+
+            return team_role, manager_role
+
+        except Exception as e:
+            print(f"Error creating team roles: {e}")
+            return None, None
+
+    async def create_team_channels(self, guild, team_name: str, team_role) -> tuple:
+        """
+        Create Discord channels for a team.
+
+        Args:
+            guild: Discord guild object
+            team_name: Name of the team
+            team_role: Discord role object for the team
+
+        Returns:
+            Tuple of (general_channel, standup_channel)
+        """
+        try:
+            import discord
+
+            # Create category if it doesn't exist
+            category_name = f"{team_name} Team"
+            category = discord.utils.get(guild.categories, name=category_name)
+
+            if not category:
+                # Create overwrites for the category
+                overwrites = {
+                    guild.default_role: discord.PermissionOverwrite(
+                        read_messages=False
+                    ),
+                    team_role: discord.PermissionOverwrite(read_messages=True),
+                    guild.me: discord.PermissionOverwrite(
+                        read_messages=True,
+                        send_messages=True,
+                        manage_channels=True,
+                    ),
+                }
+
+                category = await guild.create_category(
+                    name=category_name,
+                    overwrites=overwrites,
+                    reason=f"Category for {team_name} team channels",
+                )
+
+            # Channel overwrites (same as category)
+            channel_overwrites = {
+                guild.default_role: discord.PermissionOverwrite(read_messages=False),
+                team_role: discord.PermissionOverwrite(
+                    read_messages=True, send_messages=True
+                ),
+                guild.me: discord.PermissionOverwrite(
+                    read_messages=True,
+                    send_messages=True,
+                    manage_channels=True,
+                ),
+            }
+
+            # Create general channel
+            general_channel = await guild.create_text_channel(
+                name=f"{team_name.lower()}-general",
+                category=category,
+                overwrites=channel_overwrites,
+                topic=f"General discussion for {team_name} team",
+                reason=f"General channel for {team_name} team",
+            )
+
+            # Create standup channel
+            standup_channel = await guild.create_text_channel(
+                name=f"{team_name.lower()}-standups",
+                category=category,
+                overwrites=channel_overwrites,
+                topic=f"Daily standups and updates for {team_name} team",
+                reason=f"Standup channel for {team_name} team",
+            )
+
+            return general_channel, standup_channel
+
+        except Exception as e:
+            print(f"Error creating team channels: {e}")
+            return None, None
