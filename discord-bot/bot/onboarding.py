@@ -470,6 +470,18 @@ class RoleInputModal(discord.ui.Modal, title="Assign Role"):
                         doc_id = profile_result["doc_id"]
                         logger.info(f"Created Google Doc profile: {doc_url}")
 
+                        # Share profile document with the user (view-only)
+                        try:
+                            self.docs_service.docs_service.share_document(
+                                document_id=doc_id,
+                                email=pending.email,
+                                role="reader",
+                                send_notification=False,
+                            )
+                            logger.info(f"Shared profile document with {pending.email}")
+                        except Exception as e:
+                            logger.error(f"Error sharing profile document: {e}")
+
                         # Get team from database to get roster sheet ID
                         db_team = self.team_service.data_service.get_team_by_name(team)
                         if db_team:
@@ -483,6 +495,21 @@ class RoleInputModal(discord.ui.Modal, title="Assign Role"):
                                 )
                             except Exception as e:
                                 logger.error(f"Error adding to team_memberships: {e}")
+
+                            # Share team's Google Drive folder with the user
+                            if db_team.drive_folder_id:
+                                try:
+                                    self.docs_service.docs_service.share_document(
+                                        document_id=db_team.drive_folder_id,
+                                        email=pending.email,
+                                        role="writer",
+                                        send_notification=False,
+                                    )
+                                    logger.info(
+                                        f"Shared team folder with {pending.email}"
+                                    )
+                                except Exception as e:
+                                    logger.error(f"Error sharing team folder: {e}")
 
                             # Add to team roster spreadsheet
                             if db_team.roster_sheet_id:
@@ -805,6 +832,18 @@ class ApprovalView(discord.ui.View):
                         doc_id = profile_result["doc_id"]
                         logger.info(f"Created Google Doc profile: {doc_url}")
 
+                        # Share profile document with the user (view-only)
+                        try:
+                            self.docs_service.docs_service.share_document(
+                                document_id=doc_id,
+                                email=pending.email,
+                                role="reader",
+                                send_notification=False,
+                            )
+                            logger.info(f"Shared profile document with {pending.email}")
+                        except Exception as e:
+                            logger.error(f"Error sharing profile document: {e}")
+
                         # Update team_members with profile info
                         self.team_service.data_service.client.table(
                             "team_members"
@@ -812,10 +851,12 @@ class ApprovalView(discord.ui.View):
                             "id", str(new_member.id)
                         ).execute()
 
-                        # Add to main roster spreadsheet
-                        main_roster_id = os.getenv("GOOGLE_MAIN_ROSTER_SHEET_ID")
-                        if main_roster_id:
-                            try:
+                        # Add to main roster spreadsheet (auto-created if needed)
+                        try:
+                            main_roster_id = (
+                                self.docs_service.get_or_create_main_roster()
+                            )
+                            if main_roster_id:
                                 self.docs_service.add_member_to_roster(
                                     roster_sheet_id=main_roster_id,
                                     member_name=pending.name,
@@ -825,8 +866,8 @@ class ApprovalView(discord.ui.View):
                                     profile_url=doc_url,
                                 )
                                 logger.info(f"Added {pending.name} to main roster")
-                            except Exception as e:
-                                logger.error(f"Error adding to main roster: {e}")
+                        except Exception as e:
+                            logger.error(f"Error adding to main roster: {e}")
                 except Exception as e:
                     logger.error(f"Error creating Google Doc: {e}")
 

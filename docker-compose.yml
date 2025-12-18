@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  alfred-bot:
+    build:
+      context: .
+      dockerfile: discord-bot/Dockerfile
+    container_name: alfred-bot
+    restart: unless-stopped
+    env_file:
+      - discord-bot/.env
+    volumes:
+      # Mount credentials (create this file before running)
+      - ./discord-bot/credentials:/app/credentials:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - GOOGLE_CREDENTIALS_PATH=/app/credentials/google-credentials.json
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

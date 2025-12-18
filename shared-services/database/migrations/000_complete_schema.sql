@@ -430,10 +430,28 @@ CREATE POLICY "Anyone can submit onboarding request" ON pending_onboarding
     FOR INSERT
     WITH CHECK (true);
 
+-- System Configuration Table (singleton)
+CREATE TABLE IF NOT EXISTS system_config (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    main_roster_sheet_id VARCHAR(255),
+    main_roster_sheet_url TEXT,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    CONSTRAINT only_one_config CHECK (id = '00000000-0000-0000-0000-000000000001'::uuid)
+);
+
+-- Insert single row with fixed UUID (enforces singleton pattern)
+INSERT INTO system_config (id)
+VALUES ('00000000-0000-0000-0000-000000000001'::uuid)
+ON CONFLICT (id) DO NOTHING;
+
 -- ============================================================================
 -- COMMENTS
 -- ============================================================================
 
+COMMENT ON TABLE system_config IS 'System-wide configuration (singleton table with one row)';
+COMMENT ON COLUMN system_config.main_roster_sheet_id IS 'Google Sheets ID for main organization roster';
+COMMENT ON COLUMN system_config.main_roster_sheet_url IS 'URL to main organization roster spreadsheet';
 COMMENT ON TABLE team_members IS 'All team members with profiles and metadata';
 COMMENT ON TABLE teams IS 'Organizational teams with Discord and Google Drive integration';
 COMMENT ON TABLE roles IS 'Role definitions with hierarchy levels';
