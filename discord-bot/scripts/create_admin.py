@@ -16,14 +16,14 @@ load_dotenv(env_path)
 shared_services_path = Path(__file__).parent.parent.parent / "shared-services"
 sys.path.insert(0, str(shared_services_path))
 
-# Add docs-service to path
-docs_service_path = shared_services_path / "docs-service"
-sys.path.insert(0, str(docs_service_path))
+# Add bot directory to path
+bot_path = Path(__file__).parent.parent
+sys.path.insert(0, str(bot_path))
 
 from data_service import create_data_service
 
 try:
-    from docs_service.google_docs_client import GoogleDocsService
+    from bot.services import DocsService
 
     DOCS_AVAILABLE = True
 except ImportError:
@@ -109,35 +109,41 @@ def create_admin():
     if DOCS_AVAILABLE:
         print("\n2️⃣  Creating Google Doc profile...")
         try:
-            docs_service = GoogleDocsService()
+            docs_service = DocsService()
 
-            member_data = {
-                "name": name,
-                "email": email,
-                "phone": phone or "Not provided",
-                "team": "Unassigned",
-                "role": "Manager",
-                "bio": bio,
-            }
+            if docs_service.is_available():
+                member_data = {
+                    "name": name,
+                    "email": email,
+                    "phone": phone or "Not provided",
+                    "team": "Unassigned",
+                    "role": "Manager",
+                    "bio": bio,
+                }
 
-            # Create profile in main Team Management folder
-            profile_result = docs_service.create_team_member_profile(member_data, None)
+                # Create profile in main Team Management folder
+                profile_result = docs_service.create_team_member_profile(
+                    member_data, None
+                )
 
-            if profile_result:
-                doc_id = profile_result["doc_id"]
-                doc_url = profile_result["url"]
-                print(f"   ✅ Google Doc profile created")
-                print(f"   📄 {doc_url}")
+                if profile_result:
+                    doc_id = profile_result["doc_id"]
+                    doc_url = profile_result["url"]
+                    print(f"   ✅ Google Doc profile created")
+                    print(f"   📄 {doc_url}")
+            else:
+                print(f"   ⚠️  Google Docs service not available")
         except Exception as e:
             print(f"   ⚠️  Google Doc creation failed: {e}")
     else:
         print("\n2️⃣  Skipping Google Doc profile (service not available)")
 
     # Step 3: Add to main roster spreadsheet (if available)
-    if DOCS_AVAILABLE and doc_url:
+    if DOCS_AVAILABLE and doc_url and docs_service.is_available():
         print("\n3️⃣  Adding to main roster...")
         try:
-            main_roster_id = os.getenv("GOOGLE_MAIN_ROSTER_SHEET_ID")
+            # Get or create main roster (auto-creates if doesn't exist)
+            main_roster_id = docs_service.get_or_create_main_roster()
 
             if main_roster_id:
                 docs_service.add_member_to_roster(
@@ -150,7 +156,7 @@ def create_admin():
                 )
                 print(f"   ✅ Added to main roster")
             else:
-                print(f"   ⚠️  GOOGLE_MAIN_ROSTER_SHEET_ID not set in .env")
+                print(f"   ⚠️  Could not get or create main roster")
         except Exception as e:
             print(f"   ⚠️  Roster update failed: {e}")
     else:

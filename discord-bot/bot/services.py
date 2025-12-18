@@ -59,6 +59,7 @@ class DocsService:
         """Initialize Google Docs service if credentials are available."""
         self.docs_service = None
         self._team_management_folder_id = None
+        self._main_roster_sheet_id = None  # Cache for auto-created main roster
 
         if GoogleDocsService:
             try:
@@ -146,6 +147,94 @@ class DocsService:
             return self.docs_service.create_team_folder_structure(team_name)
         except Exception as e:
             print(f"Error creating team folder structure: {e}")
+            return None
+
+    def get_or_create_main_roster(self) -> Optional[str]:
+        """
+        Get or create the main organization roster spreadsheet.
+
+        Returns:
+            Spreadsheet ID of the main roster, or None if failed
+        """
+        if not self.is_available():
+            return None
+
+        # Return cached ID if we already fetched it this session
+        if self._main_roster_sheet_id:
+            return self._main_roster_sheet_id
+
+        # Check if user provided one in .env
+        env_roster_id = os.getenv("GOOGLE_MAIN_ROSTER_SHEET_ID")
+        if env_roster_id and env_roster_id.strip():
+            self._main_roster_sheet_id = env_roster_id
+            return self._main_roster_sheet_id
+
+        # Check database for existing main roster (persists across restarts)
+        try:
+            from data_service import create_data_service
+
+            data_service = create_data_service()
+
+            response = (
+                data_service.client.table("system_config")
+                .select("main_roster_sheet_id")
+                .eq("id", "00000000-0000-0000-0000-000000000001")
+                .execute()
+            )
+
+            if response.data and response.data[0].get("main_roster_sheet_id"):
+                self._main_roster_sheet_id = response.data[0]["main_roster_sheet_id"]
+                print(
+                    f"✓ Loaded main roster from database: {self._main_roster_sheet_id}"
+                )
+                return self._main_roster_sheet_id
+        except Exception as e:
+            print(f"Warning: Could not check database for main roster: {e}")
+
+        # Auto-create main roster in Team Management folder
+        try:
+            folder_id = self.get_team_management_folder()
+            if not folder_id:
+                print("Warning: Could not get Team Management folder for main roster")
+                return None
+
+            # Create main roster spreadsheet
+            roster_headers = [
+                "Name",
+                "Discord Username",
+                "Email",
+                "Role",
+                "Join Date",
+                "Profile Link",
+            ]
+
+            roster_result = self.docs_service.create_spreadsheet(
+                title="Organization - Main Roster",
+                folder_id=folder_id,
+                headers=roster_headers,
+            )
+
+            spreadsheet_id = roster_result["spreadsheet_id"]
+            self._main_roster_sheet_id = spreadsheet_id
+            print(f"✓ Created main organization roster: {spreadsheet_id}")
+            print(f"  URL: {roster_result['url']}")
+
+            # Save to database for persistence
+            try:
+                from data_service import create_data_service
+
+                data_service = create_data_service()
+                data_service.client.table("system_config").update(
+                    {"main_roster_sheet_id": spreadsheet_id}
+                ).eq("id", "00000000-0000-0000-0000-000000000001").execute()
+                print(f"✓ Saved main roster ID to database")
+            except Exception as e:
+                print(f"Warning: Could not save main roster to database: {e}")
+
+            return spreadsheet_id
+
+        except Exception as e:
+            print(f"Error creating main roster: {e}")
             return None
 
     def add_member_to_roster(

@@ -90,8 +90,8 @@ class AdminCommands:
             description="[Admin] Add a ClickUp list to your team's project tracking",
         )
         @app_commands.describe(
-            list_id="ClickUp list ID (from the list URL)",
-            list_name="Name of the list",
+            list_id="ClickUp list ID - Find it in your ClickUp list URL: .../list/[THIS_NUMBER]",
+            list_name="Name of the list (e.g., 'Q1 Projects', 'Sprint Backlog')",
             description="Optional description of this list",
         )
         async def add_project_list(
@@ -107,6 +107,46 @@ class AdminCommands:
             for team members.
             """
             await interaction.response.defer(ephemeral=True)
+
+            # Send helpful guide if user seems confused
+            if not list_id or list_id.lower() in ["help", "how", "where", "?"]:
+                guide_embed = discord.Embed(
+                    title="📖 How to Find Your ClickUp List ID",
+                    description="Follow these steps to find the List ID:",
+                    color=discord.Color.blue(),
+                )
+                guide_embed.add_field(
+                    name="Step 1: Open Your List in ClickUp",
+                    value="Navigate to the list you want to track in ClickUp",
+                    inline=False,
+                )
+                guide_embed.add_field(
+                    name="Step 2: Look at the URL",
+                    value=(
+                        "The URL will look like:\n"
+                        "`https://app.clickup.com/12345/v/li/901234567`\n\n"
+                        "The List ID is the number after `/li/`: **901234567**"
+                    ),
+                    inline=False,
+                )
+                guide_embed.add_field(
+                    name="Step 3: Copy the List ID",
+                    value="Copy just the numeric List ID (e.g., `901234567`)",
+                    inline=False,
+                )
+                guide_embed.add_field(
+                    name="Step 4: Run the Command",
+                    value=(
+                        "Run this command in your team channel:\n"
+                        '`/add-project-list list_id:901234567 list_name:"My List"`'
+                    ),
+                    inline=False,
+                )
+                guide_embed.set_footer(
+                    text="💡 Must be run in a team channel (e.g., #engineering-general)"
+                )
+                await interaction.followup.send(embed=guide_embed, ephemeral=True)
+                return
 
             try:
                 # Check admin access

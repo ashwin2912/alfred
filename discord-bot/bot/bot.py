@@ -294,14 +294,46 @@ async def setup(interaction: discord.Interaction):
 
 
 @bot.tree.command(
-    name="setup-clickup", description="Save your ClickUp API token for task integration"
+    name="setup-clickup",
+    description="Connect your ClickUp account to view and manage tasks",
 )
 @app_commands.describe(
-    token="Your ClickUp API token from app.clickup.com/settings/apps"
+    token="Your ClickUp API token (Get it: app.clickup.com/settings/apps → Apps → API Token → Generate/Copy)"
 )
 async def setup_clickup(interaction: discord.Interaction, token: str):
     """Save and validate ClickUp API token."""
     await interaction.response.defer(ephemeral=True)
+
+    # Send helpful guide if user seems confused
+    if not token or token.lower() in ["help", "how", "where", "?"]:
+        guide_embed = discord.Embed(
+            title="📖 How to Get Your ClickUp API Token",
+            description="Follow these steps to connect your ClickUp account:",
+            color=discord.Color.blue(),
+        )
+        guide_embed.add_field(
+            name="Step 1: Open ClickUp Settings",
+            value="Go to [ClickUp Settings](https://app.clickup.com/settings/apps)",
+            inline=False,
+        )
+        guide_embed.add_field(
+            name="Step 2: Navigate to API Token",
+            value="Click on **'Apps'** in the left sidebar, then **'API Token'**",
+            inline=False,
+        )
+        guide_embed.add_field(
+            name="Step 3: Generate or Copy Token",
+            value="Click **'Generate'** to create a new token, or **'Copy'** if you already have one",
+            inline=False,
+        )
+        guide_embed.add_field(
+            name="Step 4: Run the Command",
+            value="Run `/setup-clickup <paste_your_token_here>`",
+            inline=False,
+        )
+        guide_embed.set_footer(text="🔒 Your token is stored securely and never shared")
+        await interaction.followup.send(embed=guide_embed, ephemeral=True)
+        return
 
     discord_username = f"{interaction.user.name}#{interaction.user.discriminator}"
     if interaction.user.discriminator == "0":
@@ -428,8 +460,10 @@ async def my_tasks(interaction: discord.Interaction):
     if interaction.channel:
         teams = bot.team_service.data_service.list_teams()
         for team in teams:
-            if (team.discord_general_channel_id == interaction.channel.id or
-                team.discord_standup_channel_id == interaction.channel.id):
+            if (
+                team.discord_general_channel_id == interaction.channel.id
+                or team.discord_standup_channel_id == interaction.channel.id
+            ):
                 channel_team = team
                 break
 
@@ -606,61 +640,119 @@ async def resend_approval(interaction: discord.Interaction, request_id: str):
     name="help", description="Show available commands and how to use the bot"
 )
 async def help_command(interaction: discord.Interaction):
-    """Display help information."""
+    """Display role-based help information."""
+
+    # Check if user is onboarded
+    member = bot.team_service.get_member_by_discord_id(interaction.user.id)
+    is_admin = (
+        interaction.user.guild_permissions.administrator if interaction.guild else False
+    )
+
     embed = discord.Embed(
-        title="🤖 Team Bot Help",
-        description="Here are all the available commands:",
+        title="🤖 Alfred Bot - Command Guide",
+        description="Commands available to you based on your role:",
         color=discord.Color.blue(),
     )
 
-    embed.add_field(
-        name="/setup",
-        value="Check your onboarding status and profile information",
-        inline=False,
-    )
+    # Commands for everyone (including non-onboarded)
+    if not member:
+        embed.add_field(
+            name="🚀 Getting Started",
+            value=(
+                "**`/start-onboarding`**\n"
+                "Begin your onboarding process. You'll provide your name, email, "
+                "phone, and a brief bio. An admin will review and approve you.\n"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="ℹ️ General Commands",
+            value=("**`/help`** - Show this help message\n"),
+            inline=False,
+        )
+        embed.set_footer(
+            text="👆 Start with /start-onboarding to get access to more features!"
+        )
+    else:
+        # Onboarded member commands
+        embed.add_field(
+            name="👤 Your Profile",
+            value=(
+                "**`/setup`**\n"
+                "View your profile, team assignments, and onboarding status\n"
+            ),
+            inline=False,
+        )
+
+        embed.add_field(
+            name="📋 ClickUp Integration",
+            value=(
+                "**`/setup-clickup`**\n"
+                "Connect your ClickUp account to view and manage tasks\n"
+                "📌 **How to get your API token:**\n"
+                "1. Go to [ClickUp Settings](https://app.clickup.com/settings/apps)\n"
+                "2. Click 'Apps' → 'API Token'\n"
+                "3. Click 'Generate' or copy existing token\n"
+                "4. Run `/setup-clickup` and paste your token\n\n"
+                "**`/my-tasks`**\n"
+                "View all tasks assigned to you across teams\n\n"
+                "**`/task-info <task_id>`**\n"
+                "Get detailed info about a task including comments\n\n"
+                "**`/task-comment <task_id> <comment>`**\n"
+                "Add a comment/update to a ClickUp task\n"
+            ),
+            inline=False,
+        )
+
+        embed.add_field(
+            name="🎨 Project Planning (AI)",
+            value=(
+                "**`/brainstorm <idea>`**\n"
+                "Generate an AI-powered project plan from your idea\n\n"
+                "**`/my-projects`**\n"
+                "List all your brainstorming sessions\n"
+            ),
+            inline=False,
+        )
+
+    # Admin-only commands
+    if is_admin:
+        embed.add_field(
+            name="⚙️ Admin Commands",
+            value=(
+                "**`/create-team <name> <description> <lead>`**\n"
+                "Create a new team with Discord roles, channels, and Drive folder\n\n"
+                "**`/assign-lead <team> <member>`**\n"
+                "Assign a team lead to a team\n\n"
+                "**`/add-list-id <team>`**\n"
+                "Track ClickUp lists for team task filtering\n"
+                "📌 **How to get List ID:**\n"
+                "1. Open your list in ClickUp\n"
+                "2. Look at the URL: `https://app.clickup.com/.../list/[LIST_ID]`\n"
+                "3. Copy the LIST_ID number\n"
+                "4. Run `/add-list-id` and paste it\n\n"
+                "**`/resend-approval <request_id>`**\n"
+                "Resend an approval prompt for pending onboarding\n"
+            ),
+            inline=False,
+        )
 
     embed.add_field(
-        name="/setup-clickup <token>",
+        name="💡 Tips",
         value=(
-            "Connect your ClickUp account by providing your API token.\n"
-            "Get your token from: https://app.clickup.com/settings/apps"
+            "• All commands work in DMs or server channels\n"
+            "• Responses are private (ephemeral) by default\n"
+            "• Type `/` to see all available commands with autocomplete\n"
         ),
         inline=False,
     )
 
-    embed.add_field(
-        name="/my-tasks",
-        value="View all your assigned tasks across all ClickUp teams and lists",
-        inline=False,
-    )
-
-    embed.add_field(
-        name="/task-info <task_id>",
-        value="View detailed information about a specific task with comments",
-        inline=False,
-    )
-
-    embed.add_field(
-        name="/task-comment <task_id> <comment>",
-        value="Add a comment or update to a ClickUp task",
-        inline=False,
-    )
-
-    embed.add_field(
-        name="/brainstorm <idea>",
-        value="[Team Lead only] Generate AI-powered project plan from your idea",
-        inline=False,
-    )
-
-    embed.add_field(
-        name="/my-projects",
-        value="List all your project brainstorms",
-        inline=False,
-    )
-
-    embed.add_field(name="/help", value="Show this help message", inline=False)
-
-    embed.set_footer(text="💬 You can use all commands in DMs or in server channels!")
+    if member:
+        embed.set_footer(
+            text=f"Logged in as: {member.name} | Need help? Ask in #admin-notifications"
+        )
+    else:
+        embed.set_footer(text="Not onboarded yet? Run /start-onboarding to begin!")
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
