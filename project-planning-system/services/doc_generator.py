@@ -30,6 +30,38 @@ class ProjectPlanDocGenerator:
         """
         self.docs_service = docs_service
 
+    def generate_simple_breakdown_doc(
+        self, breakdown: Dict[str, Any], folder_id: Optional[str] = None
+    ) -> Dict[str, str]:
+        """
+        Generate a Google Doc from a simple project breakdown.
+
+        Creates a clean, editable template that team leads can review and modify
+        before publishing to ClickUp.
+
+        Args:
+            breakdown: Simple breakdown from ProjectBrainstormer.generate_simple_breakdown()
+            folder_id: Optional Google Drive folder ID
+
+        Returns:
+            Dict with doc_id and doc_url
+
+        Example:
+            >>> generator = ProjectPlanDocGenerator(docs_service)
+            >>> result = generator.generate_simple_breakdown_doc(breakdown)
+            >>> print(result['doc_url'])
+            https://docs.google.com/document/d/...
+        """
+        # Generate document content
+        content = self._format_simple_breakdown(breakdown)
+
+        # Create the document with "Plan" as title
+        doc = self.docs_service.create_document(
+            title="Plan", content=content, folder_id=folder_id
+        )
+
+        return {"doc_id": doc.id, "doc_url": doc.url, "title": breakdown["title"]}
+
     def generate_project_plan_doc(
         self, plan: Dict[str, Any], folder_id: Optional[str] = None
     ) -> Dict[str, str]:
@@ -62,6 +94,98 @@ class ProjectPlanDocGenerator:
         )
 
         return {"doc_id": doc.id, "doc_url": doc.url, "title": doc.title}
+
+    def _format_simple_breakdown(self, breakdown: Dict[str, Any]) -> str:
+        """
+        Format simple breakdown as clean, editable Google Doc content.
+
+        Args:
+            breakdown: Simple breakdown dict
+
+        Returns:
+            Formatted text content
+        """
+        content = []
+
+        # Header
+        content.append(f"# {breakdown['title']}\n\n")
+        content.append(f"**Created:** {self._get_current_date()}\n\n")
+
+        # Editing instructions
+        content.append("## ✏️ How to Edit This Plan\n\n")
+        content.append("**Before publishing to ClickUp:**\n")
+        content.append(
+            "1. Review each phase and task - add, remove, or modify as needed\n"
+        )
+        content.append("2. Keep the structure intact (Phase → Tasks format)\n")
+        content.append("3. Fill in 'Assigned To' fields with team member names\n")
+        content.append("4. Don't change task numbering or bullet formatting\n")
+        content.append("5. When ready, use `/publish-project` in Discord\n\n")
+        content.append("---\n\n")
+
+        # Overview
+        content.append("## Overview\n\n")
+        content.append(f"{breakdown['overview']}\n\n")
+
+        # Objectives
+        content.append("## Objectives\n\n")
+        for i, obj in enumerate(breakdown["objectives"], 1):
+            content.append(f"{i}. {obj}\n")
+        content.append("\n")
+
+        # Success Criteria
+        if breakdown.get("success_criteria"):
+            content.append("## Success Criteria\n\n")
+            for criterion in breakdown["success_criteria"]:
+                content.append(f"✓ {criterion}\n")
+            content.append("\n")
+
+        # Phases & Tasks
+        content.append("## Project Phases\n\n")
+        content.append("---\n\n")
+
+        for phase_num, phase in enumerate(breakdown["phases"], 1):
+            content.append(f"### Phase {phase_num}: {phase['name']}\n\n")
+            content.append(f"{phase['description']}\n\n")
+
+            # Subtasks
+            content.append("**Tasks:**\n\n")
+            for task_num, task in enumerate(phase["subtasks"], 1):
+                content.append(f"{task_num}. **{task['name']}**\n")
+                content.append(f"   - Description: {task['description']}\n")
+                content.append(
+                    f"   - Required Skills: {', '.join(task['required_skills'])}\n"
+                )
+                content.append(f"   - Status: [ ] Not Started\n")
+                content.append(f"   - Assigned To: _____________\n\n")
+
+            content.append("---\n\n")
+
+        # Team Suggestions
+        content.append("## Team Recommendations\n\n")
+        for suggestion in breakdown["team_suggestions"]:
+            content.append(f"### {suggestion['role']}\n\n")
+            content.append(f"**Skills:** {', '.join(suggestion['skills'])}\n\n")
+
+        # Next Steps
+        content.append("## Next Steps\n\n")
+        content.append(
+            "1. **Review & Edit:** Modify this plan as needed - add/remove tasks, adjust estimates\n"
+        )
+        content.append(
+            "2. **Assign Team:** Fill in the 'Assigned To' fields for each task\n"
+        )
+        content.append(
+            "3. **Publish to ClickUp:** Use `/publish-project` command to create tasks automatically\n"
+        )
+        content.append("4. **Start Execution:** Begin with Phase 1\n\n")
+
+        # Footer
+        content.append("---\n\n")
+        content.append("*Generated by Alfred AI Project Planning*\n")
+        content.append("*This is your project plan - edit freely before publishing!*\n")
+
+        return "".join(content)
 
     def _format_project_plan(
         self, analysis: Dict[str, Any], milestones: list, summary: Dict[str, Any]
