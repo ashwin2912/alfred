@@ -51,64 +51,75 @@ class ProjectPlanningCommands:
         """
         tree.add_command(self._brainstorm_command())
         tree.add_command(self._my_projects_command())
+        tree.add_command(self._publish_project_command())
         logger.info("Project planning commands registered")
 
-    async def _check_team_lead_access(
+    async def _check_channel_manager_access(
         self, interaction: discord.Interaction
     ) -> Optional[Dict[str, Any]]:
         """
-        Check if user has Team Lead role and get their team info.
+        Check if user can manage the current channel and get team info.
+
+        Command must be run in a team channel, and user must have Manage Channels permission.
 
         Returns dict with team_name, role_name, folder_id if authorized, None otherwise.
         """
-        if not interaction.guild:
+        if not interaction.guild or not interaction.channel:
             return None
 
         member = interaction.guild.get_member(interaction.user.id)
         if not member:
             return None
 
-        # Define team lead role patterns
-        team_lead_roles = {
-            "Engineering Team Lead": "Engineering",
-            "Product Team Lead": "Product",
-            "Business Team Lead": "Business",
-            "Engineering": "Engineering",  # Fallback to just team name
-            "Product": "Product",
-            "Business": "Business",
-        }
+        # Check if user has Manage Channels permission in current channel
+        permissions = interaction.channel.permissions_for(member)
+        if not permissions.manage_channels:
+            return None
 
-        # Check user's roles
-        for role in member.roles:
-            if role.name in team_lead_roles:
-                team_name = team_lead_roles[role.name]
+        # Get all teams from database
+        try:
+            teams_response = (
+                self.team_service.data_service.client.table("teams")
+                .select("name, drive_folder_id")
+                .execute()
+            )
 
-                # Get team folder from database
-                try:
-                    team = (
-                        self.team_service.data_service.client.table("teams")
-                        .select("drive_folder_id, name")
-                        .eq("name", team_name)
-                        .execute()
-                    )
+            if not teams_response.data:
+                return None
 
-                    if team.data and team.data[0].get("drive_folder_id"):
-                        return {
-                            "team_name": team_name,
-                            "role_name": role.name,
-                            "folder_id": team.data[0]["drive_folder_id"],
-                        }
-                except Exception as e:
-                    logger.error(f"Error fetching team folder: {e}")
+            # Get channel name to match against team names
+            channel_name = interaction.channel.name.lower()
 
-        return None
+            # Find matching team by checking if team name appears in channel name
+            team_name = None
+            team_folder_id = None
+
+            for team in teams_response.data:
+                team_name_lower = team["name"].lower()
+                if team_name_lower in channel_name:
+                    team_name = team["name"]
+                    team_folder_id = team.get("drive_folder_id")
+                    break
+
+            if not team_name or not team_folder_id:
+                return None
+
+            return {
+                "team_name": team_name,
+                "role_name": f"{team_name} Manager",
+                "folder_id": team_folder_id,
+            }
+
+        except Exception as e:
+            logger.error(f"Error fetching teams from database: {e}")
+            return None
 
     def _brainstorm_command(self) -> app_commands.Command:
         """Create the /brainstorm command."""
 
         @app_commands.command(
             name="brainstorm",
-            description="[Team Lead only] Generate an AI-powered project plan from your idea",
+            description="[Team Channel Manager] Generate an AI-powered project plan from your idea",
         )
         @app_commands.describe(
             project_idea="Describe your project idea (be as detailed as possible)"
@@ -124,25 +135,26 @@ class ProjectPlanningCommands:
             - Risk assessment
             - A formatted Google Doc with the full plan
 
-            **Access:** Team Lead role required
+            **Access:** Must be run in a team channel with Manage Channels permission
             **Document Location:** Your team's Google Drive folder
             """
             await interaction.response.defer(ephemeral=True)
 
             try:
-                logger.info(f"Brainstorm command called by {interaction.user}")
+                logger.info(
+                    f"Brainstorm command called by {interaction.user} in {interaction.channel.name}"
+                )
 
-                # Check if user has Team Lead role
-                team_info = await self._check_team_lead_access(interaction)
+                # Check if user can manage current channel (team permission)
+                team_info = await self._check_channel_manager_access(interaction)
                 if not team_info:
                     error_embed = discord.Embed(
                         title="❌ Access Denied",
                         description=(
-                            "This command is only available to Team Leads.\n\n"
-                            "**Required roles:**\n"
-                            "• Engineering Team Lead\n"
-                            "• Product Team Lead\n"
-                            "• Business Team Lead"
+                            "This command requires:\n\n"
+                            "1. Run in a team channel (#engineering-*, #product-*, #business-*)\n"
+                            "2. You must have **Manage Channels** permission in this channel\n\n"
+                            "Only team managers can create project plans."
                         ),
                         color=discord.Color.red(),
                     )
@@ -308,7 +320,9 @@ class ProjectPlanningCommands:
                         field_value += f"📝 Draft - Not yet published\n"
 
                     # Created date
-                    field_value += f"**Created:** {project.get('created_at', 'Unknown')[:10]}\n"
+                    field_value += (
+                        f"**Created:** {project.get('created_at', 'Unknown')[:10]}\n"
+                    )
                     field_value += f"**ID:** `{project.get('id')}`"
 
                     embed.add_field(
@@ -341,3 +355,188 @@ class ProjectPlanningCommands:
                 await interaction.followup.send(embed=error_embed, ephemeral=True)
 
         return my_projects
+
+    def _publish_project_command(self) -> app_commands.Command:
+        """Create the /publish-project command."""
+
+        @app_commands.command(
+            name="publish-project",
+            description="[Team Channel Manager] Publish project plan to ClickUp",
+        )
+        @app_commands.describe(
+            project_id="Project ID from /my-projects",
+            clickup_list_id="(Optional) ClickUp List ID - leave blank to choose from team lists",
+        )
+        async def publish_project(
+            interaction: discord.Interaction,
+            project_id: str,
+            clickup_list_id: str = None,
+        ):
+            """
+            Publish an AI-generated project plan to ClickUp.
+
+            Parses the Google Doc and creates tasks automatically.
+            If multiple ClickUp lists are configured for your team, you'll be prompted to choose one.
+            """
+            await interaction.response.defer(ephemeral=True)
+
+            try:
+                logger.info(
+                    f"Publish project command called by {interaction.user} for project {project_id}"
+                )
+
+                # Check if user can manage current channel (team permission)
+                team_info = await self._check_channel_manager_access(interaction)
+                if not team_info:
+                    error_embed = discord.Embed(
+                        title="❌ Access Denied",
+                        description=(
+                            "This command requires:\n\n"
+                            "1. Run in a team channel\n"
+                            "2. You must have **Manage Channels** permission\n\n"
+                            "Only team managers can publish projects."
+                        ),
+                        color=discord.Color.red(),
+                    )
+                    await interaction.followup.send(embed=error_embed, ephemeral=True)
+                    return
+
+                team_name = team_info["team_name"]
+
+                # Get team member to fetch ClickUp token
+                member = self.team_service.get_member_by_discord_id(interaction.user.id)
+                if not member or not member.clickup_api_token:
+                    error_embed = discord.Embed(
+                        title="❌ ClickUp Not Connected",
+                        description=(
+                            "You need to connect your ClickUp account first.\n\n"
+                            "Use `/setup-clickup <your_api_token>` to connect."
+                        ),
+                        color=discord.Color.red(),
+                    )
+                    await interaction.followup.send(embed=error_embed, ephemeral=True)
+                    return
+
+                # If no list_id provided, fetch team's configured lists
+                if not clickup_list_id:
+                    team_lists = (
+                        self.team_service.data_service.client.table("clickup_lists")
+                        .select("clickup_list_id, list_name")
+                        .eq(
+                            "team_id",
+                            (
+                                self.team_service.data_service.client.table("teams")
+                                .select("id")
+                                .eq("name", team_name)
+                                .execute()
+                            ).data[0]["id"],
+                        )
+                        .eq("is_active", True)
+                        .execute()
+                    )
+
+                    if not team_lists.data:
+                        error_embed = discord.Embed(
+                            title="❌ No ClickUp Lists Configured",
+                            description=(
+                                f"No ClickUp lists are configured for {team_name} team.\n\n"
+                                f"Ask an admin to configure lists with `/add-project-list`\n"
+                                f"Or provide a list ID: `/publish-project {project_id} <list_id>`"
+                            ),
+                            color=discord.Color.red(),
+                        )
+                        await interaction.followup.send(
+                            embed=error_embed, ephemeral=True
+                        )
+                        return
+
+                    # If multiple lists, let user choose
+                    if len(team_lists.data) > 1:
+                        # TODO: Show selection UI
+                        list_options = "\n".join(
+                            [
+                                f"• {lst['list_name']} (`{lst['clickup_list_id']}`)"
+                                for lst in team_lists.data
+                            ]
+                        )
+                        error_embed = discord.Embed(
+                            title="📋 Multiple Lists Available",
+                            description=(
+                                f"Your team has multiple ClickUp lists:\n\n"
+                                f"{list_options}\n\n"
+                                f"Please run the command again with a specific list:\n"
+                                f"`/publish-project {project_id} <list_id>`"
+                            ),
+                            color=discord.Color.blue(),
+                        )
+                        await interaction.followup.send(
+                            embed=error_embed, ephemeral=True
+                        )
+                        return
+
+                    # Use the single configured list
+                    clickup_list_id = team_lists.data[0]["clickup_list_id"]
+
+                # Call planning API to publish
+                logger.info(
+                    f"Publishing project {project_id} to ClickUp list {clickup_list_id}"
+                )
+
+                response = await self.http_client.post(
+                    f"{self.api_url}/publish-project",
+                    json={
+                        "brainstorm_id": project_id,
+                        "clickup_list_id": clickup_list_id,
+                        "clickup_api_token": member.clickup_api_token,
+                        "team_name": team_name,
+                    },
+                    timeout=120.0,  # Publishing can take time
+                )
+
+                response.raise_for_status()
+                result = response.json()
+
+                # Success embed
+                success_embed = discord.Embed(
+                    title="✅ Project Published to ClickUp",
+                    description=f"Successfully created tasks in ClickUp!",
+                    color=discord.Color.green(),
+                )
+                success_embed.add_field(
+                    name="Tasks Created",
+                    value=result.get("tasks_created", 0),
+                    inline=True,
+                )
+                success_embed.add_field(
+                    name="Tasks Assigned",
+                    value=result.get("tasks_assigned", 0),
+                    inline=True,
+                )
+                if result.get("clickup_list_url"):
+                    success_embed.add_field(
+                        name="View in ClickUp",
+                        value=f"[Open List]({result['clickup_list_url']})",
+                        inline=False,
+                    )
+
+                await interaction.followup.send(embed=success_embed, ephemeral=True)
+
+            except httpx.HTTPStatusError as e:
+                logger.error(f"API error: {e.response.status_code} - {e.response.text}")
+                error_embed = discord.Embed(
+                    title="❌ API Error",
+                    description=f"Failed to publish project: {e.response.text}",
+                    color=discord.Color.red(),
+                )
+                await interaction.followup.send(embed=error_embed, ephemeral=True)
+
+            except Exception as e:
+                logger.error(f"Error in publish-project command: {e}", exc_info=True)
+                error_embed = discord.Embed(
+                    title="❌ Error",
+                    description=f"Failed to publish project: {str(e)}",
+                    color=discord.Color.red(),
+                )
+                await interaction.followup.send(embed=error_embed, ephemeral=True)
+
+        return publish_project
