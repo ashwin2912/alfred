@@ -31,15 +31,18 @@ Time: 5 minutes manual → 10 seconds automated
 - Team roster updates in Google Sheets
 - Discord role auto-assignment
 - ClickUp task integration (`/my-tasks`, `/task-info`, `/task-comment`)
-- Team management (`/create-team`, `/add-to-team`)
+- Team management (`/create-team`, `/add-to-team`, `/list-teams`)
 - Project list tracking (`/add-project-list`, `/list-project-lists`)
 - Team task reports (`/team-report`)
-- AI-powered project planning (`/brainstorm`)
+- AI-powered project planning (`/brainstorm`, `/publish-project`)
+- ClickUp publisher with hierarchical task structure
 
-### Team Management System
-- Automated project creation in ClickUp
-- Smart skill-based task assignment
-- AI-powered project planning
+### Project Planning System
+- AI-powered project breakdown (Claude Haiku 4.5)
+- Google Docs plan generation with editing instructions
+- ClickUp publisher with hierarchical tasks (phases as parents, subtasks as children)
+- Multi-list support for teams
+- Channel-based permission system
 
 ### Shared Services
 - `data-service`: Supabase database and authentication API
@@ -166,6 +169,6 @@ python scripts/interactive_setup.py
 
 ---
 
-**Last Updated**: Dec 16, 2024  
-**Status**: Production-ready with data integrity migrations  
-**Version**: 1.3.0
+**Last Updated**: Dec 21, 2024  
+**Status**: Production-ready with ClickUp Publisher  
+**Version**: 1.4.0
