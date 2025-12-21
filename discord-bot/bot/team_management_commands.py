@@ -44,6 +44,7 @@ class TeamManagementCommands:
         tree.add_command(self._create_team_command())
         tree.add_command(self._add_to_team_command())
         tree.add_command(self._team_report_command())
+        tree.add_command(self._list_teams_command())
         logger.info("Team management commands registered")
 
     async def _check_admin_access(
@@ -119,8 +120,10 @@ class TeamManagementCommands:
             await interaction.response.defer(ephemeral=True)
 
             # Verify team lead is in database
-            team_lead_member = self.team_service.data_service.get_team_member_by_discord_id(
-                team_lead.id
+            team_lead_member = (
+                self.team_service.data_service.get_team_member_by_discord_id(
+                    team_lead.id
+                )
             )
             if not team_lead_member:
                 await interaction.followup.send(
@@ -211,7 +214,8 @@ class TeamManagementCommands:
                     self.docs_service.add_member_to_roster(
                         roster_sheet_id=folder_result["roster_sheet_id"],
                         member_name=team_lead_member.name,
-                        discord_username=team_lead_member.discord_username or team_lead.name,
+                        discord_username=team_lead_member.discord_username
+                        or team_lead.name,
                         email=team_lead_member.email,
                         role=f"{team_name} Team Lead",
                         profile_url=team_lead_member.profile_url or "",
@@ -706,12 +710,15 @@ class TeamManagementCommands:
 
                 # Fetch all tasks from configured lists
                 all_team_tasks = await clickup.get_all_tasks(
-                    assigned_only=False,
-                    list_ids=list_ids
+                    assigned_only=False, list_ids=list_ids
                 )
 
-                logger.info(f"Fetched {len(all_team_tasks)} tasks from {len(list_ids)} lists: {list_ids}")
-                logger.info(f"Sample task: {all_team_tasks[0] if all_team_tasks else 'No tasks'}")
+                logger.info(
+                    f"Fetched {len(all_team_tasks)} tasks from {len(list_ids)} lists: {list_ids}"
+                )
+                logger.info(
+                    f"Sample task: {all_team_tasks[0] if all_team_tasks else 'No tasks'}"
+                )
 
                 # Build a map of team member IDs for filtering
                 team_member_ids = set()
@@ -754,7 +761,9 @@ class TeamManagementCommands:
                 # Analyze tasks
                 total_tasks = len(all_team_tasks)
 
-                logger.info(f"Total tasks: {total_tasks}, Team member IDs: {team_member_ids}")
+                logger.info(
+                    f"Total tasks: {total_tasks}, Team member IDs: {team_member_ids}"
+                )
                 logger.info(f"Member task counts: {member_task_counts}")
 
                 if total_tasks == 0:
@@ -879,9 +888,12 @@ class TeamManagementCommands:
                         priority = task.get("priority")
                         priority_emoji = ""
                         if priority:
-                            priority_emoji = {"1": "🔴", "2": "🟡", "3": "🔵", "4": "⚪"}.get(
-                                str(priority.get("id", "")), ""
-                            )
+                            priority_emoji = {
+                                "1": "🔴",
+                                "2": "🟡",
+                                "3": "🔵",
+                                "4": "⚪",
+                            }.get(str(priority.get("id", "")), "")
 
                         task_url = task.get("url", "")
                         if task_url:
@@ -890,7 +902,9 @@ class TeamManagementCommands:
                             tasks_text += f"{priority_emoji} {task_name} - {status} ({assignee_name})\n"
 
                     if len(all_team_tasks) > 10:
-                        tasks_text += f"\n*...and {len(all_team_tasks) - 10} more tasks*"
+                        tasks_text += (
+                            f"\n*...and {len(all_team_tasks) - 10} more tasks*"
+                        )
 
                     embed.add_field(
                         name="📝 Recent Tasks", value=tasks_text, inline=False
@@ -904,7 +918,9 @@ class TeamManagementCommands:
                         member_name = task.get("_member_name", "Unknown")
                         task_url = task.get("url", "")
                         if task_url:
-                            overdue_text += f"• [{task_name}]({task_url}) ({member_name})\n"
+                            overdue_text += (
+                                f"• [{task_name}]({task_url}) ({member_name})\n"
+                            )
                         else:
                             overdue_text += f"• {task_name} ({member_name})\n"
                     if len(overdue_tasks) > 5:
@@ -928,7 +944,9 @@ class TeamManagementCommands:
                         if task_url:
                             due_soon_text += f"• [{task_name}]({task_url}) - {days_until}d ({member_name})\n"
                         else:
-                            due_soon_text += f"• {task_name} - {days_until}d ({member_name})\n"
+                            due_soon_text += (
+                                f"• {task_name} - {days_until}d ({member_name})\n"
+                            )
                     if len(due_soon) > 5:
                         due_soon_text += f"• *...and {len(due_soon) - 5} more*\n"
                     embed.add_field(
@@ -952,3 +970,109 @@ class TeamManagementCommands:
                 )
 
         return team_report
+
+    def _list_teams_command(self) -> app_commands.Command:
+        """Create the /list-teams command."""
+
+        @app_commands.command(
+            name="list-teams",
+            description="[Admin] List all teams and their members with roles",
+        )
+        async def list_teams(interaction: discord.Interaction):
+            """Display all teams and their members."""
+            # Check admin access
+            has_access, error_msg = await self._check_admin_access(interaction)
+            if not has_access:
+                await interaction.response.send_message(error_msg, ephemeral=True)
+                return
+
+            await interaction.response.defer(ephemeral=True)
+
+            try:
+                # Fetch all teams
+                teams_response = (
+                    self.team_service.data_service.client.table("teams")
+                    .select("*")
+                    .order("name")
+                    .execute()
+                )
+
+                if not teams_response.data:
+                    await interaction.followup.send("No teams found.", ephemeral=True)
+                    return
+
+                # Create main embed
+                main_embed = discord.Embed(
+                    title="📊 All Teams Overview",
+                    description=f"Total Teams: {len(teams_response.data)}",
+                    color=discord.Color.blue(),
+                )
+
+                # Process each team
+                for team in teams_response.data:
+                    team_name = team["name"]
+
+                    # Fetch team members directly from team_members table
+                    members_response = (
+                        self.team_service.data_service.client.table("team_members")
+                        .select("id, name, role")
+                        .eq("team", team_name)
+                        .eq("status", "active")
+                        .execute()
+                    )
+
+                    logger.info(
+                        f"Team '{team_name}': Found {len(members_response.data)} members"
+                    )
+
+                    # Get member details
+                    member_list = []
+                    lead_count = 0
+
+                    # Check team lead from teams table
+                    team_lead_id = team.get("team_lead_id")
+
+                    for member in members_response.data:
+                        name = member.get("name", "Unknown")
+                        role = member.get("role", "Member")
+                        member_id = member.get("id")
+                        is_lead = team_lead_id and member_id == team_lead_id
+
+                        if is_lead:
+                            lead_count += 1
+                            member_list.append(f"🎖️ **{name}** - {role} (Team Lead)")
+                        else:
+                            member_list.append(f"• {name} - {role}")
+
+                    # Build field value
+                    if member_list:
+                        field_value = f"**Members:** {len(member_list)}\n"
+                        if lead_count > 0:
+                            field_value += f"**Team Leads:** {lead_count}\n\n"
+                        else:
+                            field_value += "\n"
+                        field_value += "\n".join(
+                            member_list[:10]
+                        )  # Limit to 10 members
+
+                        if len(member_list) > 10:
+                            field_value += f"\n... and {len(member_list) - 10} more"
+                    else:
+                        field_value = "No members assigned"
+
+                    main_embed.add_field(
+                        name=f"🏢 {team_name}",
+                        value=field_value,
+                        inline=False,
+                    )
+
+                await interaction.followup.send(embed=main_embed, ephemeral=True)
+                logger.info(f"Listed all teams for {interaction.user.name}")
+
+            except Exception as e:
+                logger.error(f"Failed to list teams: {str(e)}", exc_info=True)
+                await interaction.followup.send(
+                    f"❌ Error listing teams: {str(e)}", ephemeral=True
+                )
+
+        return list_teams
