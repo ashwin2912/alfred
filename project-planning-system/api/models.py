@@ -16,7 +16,9 @@ class BrainstormRequest(BaseModel):
     google_drive_folder_id: Optional[str] = Field(
         None, description="Optional folder for the doc"
     )
-    team_name: Optional[str] = Field(None, description="Team name (e.g., Engineering, Product)")
+    team_name: Optional[str] = Field(
+        None, description="Team name (e.g., Engineering, Product)"
+    )
     role_name: Optional[str] = Field(None, description="User's role name")
 
 
@@ -69,3 +71,26 @@ class HealthResponse(BaseModel):
     anthropic_configured: bool
     google_docs_configured: bool
     database_configured: bool
+
+
+class PublishProjectRequest(BaseModel):
+    """Request to publish a project to ClickUp."""
+
+    brainstorm_id: str = Field(..., description="Project brainstorm UUID")
+    clickup_list_id: str = Field(..., description="ClickUp list ID to create tasks in")
+    clickup_api_token: str = Field(..., description="User's ClickUp API token")
+    team_name: str = Field(..., description="Team name for assignment logic")
+
+
+class PublishProjectResponse(BaseModel):
+    """Response from publishing a project."""
+
+    brainstorm_id: UUID = Field(..., description="Project ID")
+    tasks_created: int = Field(..., description="Number of tasks created")
+    tasks_assigned: int = Field(
+        ..., description="Number of tasks assigned to team members"
+    )
+    clickup_list_url: str = Field(..., description="URL to view tasks in ClickUp")
+    errors: List[str] = Field(
+        default_factory=list, description="Any errors encountered"
+    )

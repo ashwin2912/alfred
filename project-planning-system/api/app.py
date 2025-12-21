@@ -21,9 +21,11 @@ sys.path.insert(
     0, str(Path(__file__).parent.parent.parent / "shared-services" / "data-service")
 )
 
-from ai.project_brainstormer import ProjectBrainstormer
 from data_service.client import create_data_service
 from docs_service.google_docs_client import GoogleDocsService
+
+from ai.project_brainstormer import ProjectBrainstormer
+from services.clickup_publisher import ClickUpPublisher
 from services.doc_generator import ProjectPlanDocGenerator
 
 from .models import (
@@ -33,6 +35,8 @@ from .models import (
     ProjectDetailResponse,
     ProjectListItem,
     ProjectListResponse,
+    PublishProjectRequest,
+    PublishProjectResponse,
 )
 
 # Load environment variables
@@ -125,18 +129,18 @@ async def brainstorm_project(request: BrainstormRequest):
     Generate a simple project breakdown from an idea.
 
     This endpoint:
-    1. Generates a plain text breakdown with AI (single call)
-    2. Pastes the text directly into a Google Doc
+    1. Generates a structured breakdown with AI (single call)
+    2. Formats it into a clean Google Doc template
     3. Saves everything to the database
 
-    Team leads can then manually edit the doc before creating ClickUp tasks.
+    Team leads can then review/edit the doc before publishing to ClickUp.
 
     Returns the project details and Google Doc link.
     """
     if not brainstormer:
         raise HTTPException(status_code=503, detail="AI service not configured")
 
-    if not docs_service:
+    if not doc_generator:
         raise HTTPException(
             status_code=503, detail="Google Docs service not configured"
         )
@@ -146,36 +150,28 @@ async def brainstorm_project(request: BrainstormRequest):
             f"Brainstorm request from {request.discord_username}: {request.project_idea[:100]}..."
         )
 
-        # Generate simple text breakdown with AI (single call)
+        # Generate structured breakdown with AI (single call, ~10-30 seconds)
         logger.info("Generating project breakdown...")
-        breakdown_text = brainstormer.generate_simple_breakdown(request.project_idea)
+        breakdown = brainstormer.generate_simple_breakdown(request.project_idea)
 
-        # Extract a title from the first few lines for database
-        title_line = breakdown_text.split('\n')[0].strip()
-        if title_line.startswith('#'):
-            title = title_line.lstrip('#').strip()
-        else:
-            # Fallback: use first 50 chars
-            title = request.project_idea[:50] + "..." if len(request.project_idea) > 50 else request.project_idea
-
-        # Create Google Doc with plain text
+        # Create formatted Google Doc
         logger.info("Creating Google Doc...")
         folder_id = request.google_drive_folder_id or docs_service.default_folder_id
-        doc = docs_service.create_document(
-            title=title,
-            content=breakdown_text,
-            folder_id=folder_id
+        doc_result = doc_generator.generate_simple_breakdown_doc(
+            breakdown, folder_id=folder_id
         )
 
-        # Save to database with simplified structure
+        # Calculate summary stats
+        total_tasks = sum(len(phase["subtasks"]) for phase in breakdown["phases"])
+
+        # Save to database
         logger.info("Saving to database...")
-        brainstorm_id = await _save_simple_brainstorm(
+        brainstorm_id = await _save_structured_brainstorm(
             request.discord_user_id,
             request.discord_username,
             request.project_idea,
-            title,
-            breakdown_text,
-            doc,
+            breakdown,
+            doc_result,
             request.team_name,
             request.role_name,
         )
@@ -184,11 +180,15 @@ async def brainstorm_project(request: BrainstormRequest):
 
         return BrainstormResponse(
             brainstorm_id=brainstorm_id,
-            title=title,
-            doc_id=doc.id,
-            doc_url=doc.url,
-            summary={"note": "Simple breakdown - edit in Google Docs before creating tasks"},
-            analysis={"breakdown": breakdown_text},
+            title=breakdown["title"],
+            doc_id=doc_result["doc_id"],
+            doc_url=doc_result["doc_url"],
+            summary={
+                "total_phases": len(breakdown["phases"]),
+                "total_tasks": total_tasks,
+                "note": "Review and edit the Google Doc, then use /publish-project to create tasks in ClickUp",
+            },
+            analysis=breakdown,
         )
 
     except Exception as e:
@@ -274,19 +274,99 @@ async def get_project_detail(brainstorm_id: UUID):
         raise HTTPException(status_code=500, detail=f"Failed to get project: {str(e)}")
 
 
-async def _save_simple_brainstorm(
+@app.post("/publish-project", response_model=PublishProjectResponse)
+async def publish_project(request: PublishProjectRequest):
+    """
+    Publish a project plan to ClickUp.
+
+    Takes a brainstorm ID, parses the stored breakdown, and creates tasks in ClickUp.
+    """
+    if not data_service:
+        raise HTTPException(status_code=503, detail="Database service not configured")
+
+    try:
+        logger.info(
+            f"Publishing project {request.brainstorm_id} to ClickUp list {request.clickup_list_id}"
+        )
+
+        # Fetch project from database
+        result = (
+            data_service.client.table("project_brainstorms")
+            .select("*")
+            .eq("id", request.brainstorm_id)
+            .execute()
+        )
+
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        project = result.data[0]
+
+        # Parse ai_analysis
+        if not project.get("ai_analysis"):
+            raise HTTPException(
+                status_code=400,
+                detail="Project has no AI analysis data. It may have been created with an older version.",
+            )
+
+        breakdown = json.loads(project["ai_analysis"])
+
+        # Create ClickUp publisher
+        publisher = ClickUpPublisher(request.clickup_api_token)
+
+        # Publish to ClickUp
+        logger.info("Creating tasks in ClickUp...")
+        publish_result = await publisher.publish_project(
+            breakdown=breakdown, clickup_list_id=request.clickup_list_id
+        )
+
+        tasks_created = publish_result["tasks_created"]
+        errors = publish_result["errors"]
+
+        logger.info(f"Created {tasks_created} tasks in ClickUp")
+
+        if errors:
+            logger.warning(f"Encountered {len(errors)} errors during publishing")
+
+        # Update database with clickup_list_id
+        data_service.client.table("project_brainstorms").update(
+            {"clickup_list_id": request.clickup_list_id, "status": "published"}
+        ).eq("id", request.brainstorm_id).execute()
+
+        # Get list URL
+        list_url = await publisher.get_list_url(request.clickup_list_id)
+        if not list_url:
+            list_url = f"https://app.clickup.com/t/{request.clickup_list_id}"
+
+        return PublishProjectResponse(
+            brainstorm_id=UUID(request.brainstorm_id),
+            tasks_created=tasks_created,
+            tasks_assigned=0,  # No auto-assignment
+            clickup_list_url=list_url,
+            errors=errors,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to publish project: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail=f"Failed to publish project: {str(e)}"
+        )
+
+
+async def _save_structured_brainstorm(
     discord_user_id: int,
     discord_username: str,
     raw_idea: str,
-    title: str,
-    breakdown_text: str,
-    doc: any,  # Document object from docs_service
+    breakdown: dict,
+    doc_result: dict,
     team_name: Optional[str] = None,
     role_name: Optional[str] = None,
 ) -> UUID:
-    """Save simple brainstorm to database."""
+    """Save structured brainstorm to database."""
 
-    # Insert into database with minimal fields
+    # Insert into database with structured breakdown
     result = (
         data_service.client.table("project_brainstorms")
         .insert(
@@ -294,10 +374,13 @@ async def _save_simple_brainstorm(
                 "discord_user_id": discord_user_id,
                 "discord_username": discord_username,
                 "team_name": team_name,
-                "title": title,
-                "doc_id": doc.id,
-                "doc_url": doc.url,
-                # clickup_list_id will be added later when tasks are created
+                "title": breakdown["title"],
+                "doc_id": doc_result["doc_id"],
+                "doc_url": doc_result["doc_url"],
+                "ai_analysis": json.dumps(breakdown),  # Store structured breakdown
+                "raw_idea": raw_idea,
+                "status": "draft",
+                # clickup_list_id will be added later when published
             }
         )
         .execute()
