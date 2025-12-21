@@ -18,9 +18,186 @@ Please provide:
 3. Specific tasks for each phase
 4. Suggested team members or skills needed
 
-Format your response as a clear, readable document that can be pasted directly into Google Docs. Use headers, bullet points, and clear structure.
+{{
+    "title": "Clear project title (5-8 words)",
+    "overview": "Brief project overview explaining what will be built and why (2-3 sentences)",
+    "objectives": [
+        "Primary objective 1",
+        "Primary objective 2",
+        "Primary objective 3"
+    ],
+    "phases": [
+        {{
+            "name": "Phase 1: Planning & Design",
+            "description": "Brief description of what happens in this phase",
+            "estimated_duration": "1 week",
+            "subtasks": [
+                {{
+                    "name": "Define project requirements",
+                    "description": "Gather and document detailed requirements",
+                    "estimated_hours": 4,
+                    "required_skills": ["Product Management", "Technical Writing"]
+                }},
+                {{
+                    "name": "Create system architecture diagram",
+                    "description": "Design high-level system architecture",
+                    "estimated_hours": 6,
+                    "required_skills": ["System Design", "Architecture"]
+                }}
+            ]
+        }},
+        {{
+            "name": "Phase 2: Development",
+            "description": "Build core features",
+            "estimated_duration": "2-3 weeks",
+            "subtasks": [
+                {{
+                    "name": "Setup development environment",
+                    "description": "Initialize repository, configure tools",
+                    "estimated_hours": 3,
+                    "required_skills": ["DevOps", "Git"]
+                }}
+            ]
+        }}
+    ],
+    "team_suggestions": [
+        {{
+            "role": "Backend Developer",
+            "skills": ["Python", "API Development"],
+            "time_commitment": "Full-time for 3 weeks"
+        }},
+        {{
+            "role": "Frontend Developer",
+            "skills": ["React", "UI/UX"],
+            "time_commitment": "Full-time for 2 weeks"
+        }}
+    ],
+    "success_criteria": [
+        "Measurable success criterion 1",
+        "Measurable success criterion 2"
+    ]
+}}
 
-Keep it practical and actionable. The team lead will review and edit this before creating tasks in ClickUp."""
+IMPORTANT Guidelines:
+- Create 3-5 phases maximum (keep it high-level)
+- Each phase should have 3-8 subtasks
+- Each subtask: 2-12 hours (not too granular)
+- Be specific but concise
+- Focus on structure the team lead can easily review and modify
+
+Example Structure to Follow:
+
+{{
+    "title": "Team Task Dashboard",
+    "overview": "Build a real-time dashboard that displays task completion metrics for all teams. This will help managers track progress and identify bottlenecks quickly.",
+    "objectives": [
+        "Provide real-time visibility into team task status",
+        "Enable filtering by team, project, and time period",
+        "Generate weekly progress reports automatically"
+    ],
+    "phases": [
+        {{
+            "name": "Phase 1: Planning & Setup",
+            "description": "Define requirements and setup project infrastructure",
+            "estimated_duration": "3-4 days",
+            "subtasks": [
+                {{
+                    "name": "Gather dashboard requirements",
+                    "description": "Interview team leads to understand needed metrics and features",
+                    "estimated_hours": 4,
+                    "required_skills": ["Product Management", "Requirements Analysis"]
+                }},
+                {{
+                    "name": "Design data model",
+                    "description": "Define database schema for task tracking and aggregations",
+                    "estimated_hours": 6,
+                    "required_skills": ["Database Design", "SQL"]
+                }},
+                {{
+                    "name": "Create UI wireframes",
+                    "description": "Design dashboard layout and key components",
+                    "estimated_hours": 5,
+                    "required_skills": ["UI/UX Design", "Figma"]
+                }}
+            ]
+        }},
+        {{
+            "name": "Phase 2: Backend Development",
+            "description": "Build API and data processing logic",
+            "estimated_duration": "1 week",
+            "subtasks": [
+                {{
+                    "name": "Implement ClickUp API integration",
+                    "description": "Fetch tasks and track status changes via ClickUp webhooks",
+                    "estimated_hours": 8,
+                    "required_skills": ["Python", "REST APIs", "ClickUp API"]
+                }},
+                {{
+                    "name": "Build aggregation endpoints",
+                    "description": "Create API endpoints for task metrics and statistics",
+                    "estimated_hours": 10,
+                    "required_skills": ["Python", "FastAPI", "SQL"]
+                }}
+            ]
+        }},
+        {{
+            "name": "Phase 3: Frontend Development",
+            "description": "Build dashboard UI components",
+            "estimated_duration": "1 week",
+            "subtasks": [
+                {{
+                    "name": "Setup React project",
+                    "description": "Initialize React app with routing and state management",
+                    "estimated_hours": 4,
+                    "required_skills": ["React", "TypeScript"]
+                }},
+                {{
+                    "name": "Build task metrics components",
+                    "description": "Create charts and tables for displaying task data",
+                    "estimated_hours": 12,
+                    "required_skills": ["React", "Chart.js", "CSS"]
+                }}
+            ]
+        }},
+        {{
+            "name": "Phase 4: Testing & Deployment",
+            "description": "Test functionality and deploy to production",
+            "estimated_duration": "3-4 days",
+            "subtasks": [
+                {{
+                    "name": "Write integration tests",
+                    "description": "Test API endpoints and data flows",
+                    "estimated_hours": 6,
+                    "required_skills": ["Python", "Pytest", "Testing"]
+                }},
+                {{
+                    "name": "Deploy to production",
+                    "description": "Setup hosting, CI/CD, and monitoring",
+                    "estimated_hours": 5,
+                    "required_skills": ["DevOps", "Docker", "GCP/AWS"]
+                }}
+            ]
+        }}
+    ],
+    "team_suggestions": [
+        {{
+            "role": "Full-Stack Developer",
+            "skills": ["Python", "React", "API Development"],
+            "time_commitment": "Full-time for 2-3 weeks"
+        }},
+        {{
+            "role": "UI/UX Designer",
+            "skills": ["Figma", "Dashboard Design", "Data Visualization"],
+            "time_commitment": "Part-time (10-15 hours total)"
+        }}
+    ],
+    "success_criteria": [
+        "Dashboard loads task data within 2 seconds",
+        "Shows real-time updates when tasks are completed",
+        "Generates accurate weekly reports for all teams",
+        "Positive feedback from at least 3 team leads"
+    ]
+}}"""
 
 
 def get_project_analysis_prompt(project_idea: str) -> str:
