@@ -3,20 +3,17 @@
 
 def get_simple_project_breakdown_prompt(project_idea: str) -> str:
     """
-    Simple prompt for project breakdown.
+    Simple prompt for high-level project breakdown.
 
-    Returns plain text breakdown that can be directly pasted in Google Docs.
+    Returns structured JSON that will be formatted into a Google Doc template.
+    The team lead can then review/edit the doc before publishing to ClickUp.
     """
-    return f"""You are an expert project manager. A team lead has come to you with a project idea and needs help breaking it down into actionable tasks.
+    return f"""You are an expert project manager. A team lead needs help breaking down a project idea into a simple, actionable structure.
 
 Project Idea:
 {project_idea}
 
-Please provide:
-1. A brief project overview (2-3 sentences)
-2. Key milestones/phases
-3. Specific tasks for each phase
-4. Suggested team members or skills needed
+Provide a high-level breakdown in the following JSON format:
 
 {{
     "title": "Clear project title (5-8 words)",
@@ -30,18 +27,15 @@ Please provide:
         {{
             "name": "Phase 1: Planning & Design",
             "description": "Brief description of what happens in this phase",
-            "estimated_duration": "1 week",
             "subtasks": [
                 {{
                     "name": "Define project requirements",
                     "description": "Gather and document detailed requirements",
-                    "estimated_hours": 4,
                     "required_skills": ["Product Management", "Technical Writing"]
                 }},
                 {{
                     "name": "Create system architecture diagram",
                     "description": "Design high-level system architecture",
-                    "estimated_hours": 6,
                     "required_skills": ["System Design", "Architecture"]
                 }}
             ]
@@ -49,12 +43,10 @@ Please provide:
         {{
             "name": "Phase 2: Development",
             "description": "Build core features",
-            "estimated_duration": "2-3 weeks",
             "subtasks": [
                 {{
                     "name": "Setup development environment",
                     "description": "Initialize repository, configure tools",
-                    "estimated_hours": 3,
                     "required_skills": ["DevOps", "Git"]
                 }}
             ]
@@ -63,13 +55,11 @@ Please provide:
     "team_suggestions": [
         {{
             "role": "Backend Developer",
-            "skills": ["Python", "API Development"],
-            "time_commitment": "Full-time for 3 weeks"
+            "skills": ["Python", "API Development"]
         }},
         {{
             "role": "Frontend Developer",
-            "skills": ["React", "UI/UX"],
-            "time_commitment": "Full-time for 2 weeks"
+            "skills": ["React", "UI/UX"]
         }}
     ],
     "success_criteria": [
@@ -81,9 +71,9 @@ Please provide:
 IMPORTANT Guidelines:
 - Create 3-5 phases maximum (keep it high-level)
 - Each phase should have 3-8 subtasks
-- Each subtask: 2-12 hours (not too granular)
 - Be specific but concise
 - Focus on structure the team lead can easily review and modify
+- DO NOT include time estimates or durations
 
 Example Structure to Follow:
 
@@ -99,24 +89,20 @@ Example Structure to Follow:
         {{
             "name": "Phase 1: Planning & Setup",
             "description": "Define requirements and setup project infrastructure",
-            "estimated_duration": "3-4 days",
             "subtasks": [
                 {{
                     "name": "Gather dashboard requirements",
                     "description": "Interview team leads to understand needed metrics and features",
-                    "estimated_hours": 4,
                     "required_skills": ["Product Management", "Requirements Analysis"]
                 }},
                 {{
                     "name": "Design data model",
                     "description": "Define database schema for task tracking and aggregations",
-                    "estimated_hours": 6,
                     "required_skills": ["Database Design", "SQL"]
                 }},
                 {{
                     "name": "Create UI wireframes",
                     "description": "Design dashboard layout and key components",
-                    "estimated_hours": 5,
                     "required_skills": ["UI/UX Design", "Figma"]
                 }}
             ]
@@ -124,18 +110,15 @@ Example Structure to Follow:
         {{
             "name": "Phase 2: Backend Development",
             "description": "Build API and data processing logic",
-            "estimated_duration": "1 week",
             "subtasks": [
                 {{
                     "name": "Implement ClickUp API integration",
                     "description": "Fetch tasks and track status changes via ClickUp webhooks",
-                    "estimated_hours": 8,
                     "required_skills": ["Python", "REST APIs", "ClickUp API"]
                 }},
                 {{
                     "name": "Build aggregation endpoints",
                     "description": "Create API endpoints for task metrics and statistics",
-                    "estimated_hours": 10,
                     "required_skills": ["Python", "FastAPI", "SQL"]
                 }}
             ]
@@ -143,18 +126,15 @@ Example Structure to Follow:
         {{
             "name": "Phase 3: Frontend Development",
             "description": "Build dashboard UI components",
-            "estimated_duration": "1 week",
             "subtasks": [
                 {{
                     "name": "Setup React project",
                     "description": "Initialize React app with routing and state management",
-                    "estimated_hours": 4,
                     "required_skills": ["React", "TypeScript"]
                 }},
                 {{
                     "name": "Build task metrics components",
                     "description": "Create charts and tables for displaying task data",
-                    "estimated_hours": 12,
                     "required_skills": ["React", "Chart.js", "CSS"]
                 }}
             ]
@@ -162,18 +142,15 @@ Example Structure to Follow:
         {{
             "name": "Phase 4: Testing & Deployment",
             "description": "Test functionality and deploy to production",
-            "estimated_duration": "3-4 days",
             "subtasks": [
                 {{
                     "name": "Write integration tests",
                     "description": "Test API endpoints and data flows",
-                    "estimated_hours": 6,
                     "required_skills": ["Python", "Pytest", "Testing"]
                 }},
                 {{
                     "name": "Deploy to production",
                     "description": "Setup hosting, CI/CD, and monitoring",
-                    "estimated_hours": 5,
                     "required_skills": ["DevOps", "Docker", "GCP/AWS"]
                 }}
             ]
@@ -182,13 +159,11 @@ Example Structure to Follow:
     "team_suggestions": [
         {{
             "role": "Full-Stack Developer",
-            "skills": ["Python", "React", "API Development"],
-            "time_commitment": "Full-time for 2-3 weeks"
+            "skills": ["Python", "React", "API Development"]
         }},
         {{
             "role": "UI/UX Designer",
-            "skills": ["Figma", "Dashboard Design", "Data Visualization"],
-            "time_commitment": "Part-time (10-15 hours total)"
+            "skills": ["Figma", "Dashboard Design", "Data Visualization"]
         }}
     ],
     "success_criteria": [
