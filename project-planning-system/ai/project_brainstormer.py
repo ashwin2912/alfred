@@ -46,27 +46,38 @@ class ProjectBrainstormer:
         # Use Claude Haiku 4.5 - cheapest and fastest option
         self.model = "claude-haiku-4-5-20251001"
 
-    def generate_simple_breakdown(self, project_idea: str) -> str:
+    def generate_simple_breakdown(self, project_idea: str) -> Dict[str, Any]:
         """
-        Generate a simple text breakdown of a project idea.
+        Generate a simple, high-level breakdown of a project idea.
 
-        This is the simplified approach that returns plain text (not JSON)
-        that can be directly pasted into Google Docs for manual editing.
+        This method creates a structured project plan that's easy for team leads
+        to review and modify. Returns JSON that will be formatted into a Google Doc.
 
         Args:
             project_idea: Free-form description of the project
 
         Returns:
-            Plain text breakdown with overview, milestones, tasks, and team suggestions
+            Dict containing:
+                - title: Project title
+                - overview: Brief project overview (2-3 sentences)
+                - objectives: List of primary objectives
+                - phases: List of project phases, each containing:
+                    * name: Phase name
+                    * description: What happens in this phase
+                    * estimated_duration: Time estimate
+                    * subtasks: List of subtasks with name, description, hours, skills
+                - team_suggestions: Recommended roles and skills
+                - success_criteria: List of measurable success criteria
 
         Example:
             >>> brainstormer = ProjectBrainstormer()
             >>> breakdown = brainstormer.generate_simple_breakdown(
             ...     "Build a dashboard to monitor team task completion"
             ... )
-            >>> print(breakdown)
-            Project Overview:
-            ...
+            >>> print(breakdown['title'])
+            'Team Task Dashboard'
+            >>> print(f"{len(breakdown['phases'])} phases")
+            4 phases
         """
         prompt = get_simple_project_breakdown_prompt(project_idea)
 
@@ -77,8 +88,11 @@ class ProjectBrainstormer:
             messages=[{"role": "user", "content": prompt}],
         )
 
-        # Return plain text directly (not JSON)
-        return response.content[0].text
+        # Extract and return structured JSON
+        content = response.content[0].text
+        breakdown = self._extract_json(content)
+
+        return breakdown
 
     def analyze_project_idea(self, project_idea: str) -> Dict[str, Any]:
         """
