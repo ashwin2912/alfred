@@ -1,22 +1,50 @@
-version: '3.8'
+version: "3.8"
 
 services:
-  alfred-bot:
+  ai-core-service:
     build:
-      context: .
-      dockerfile: discord-bot/Dockerfile
-    container_name: alfred-bot
-    restart: unless-stopped
+      context: ./ai-core-service
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
     env_file:
-      - discord-bot/.env
-    volumes:
-      # Mount credentials (create this file before running)
-      - ./discord-bot/credentials:/app/credentials:ro
+      - .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  task-service:
+    build:
+      context: ./task-service
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8002"
+    env_file:
+      - .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  discord-bot:
+    build:
+      context: ./discord-bot
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    depends_on:
+      - ai-core-service
+      - task-service
+    restart: unless-stopped
     environment:
-      - PYTHONUNBUFFERED=1
-      - GOOGLE_CREDENTIALS_PATH=/app/credentials/google-credentials.json
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+      - AI_CORE_SERVICE_URL=http://ai-core-service:8001
+      - TASK_SERVICE_URL=http://task-service:8002
+
+networks:
+  default:
+    name: alfred-network

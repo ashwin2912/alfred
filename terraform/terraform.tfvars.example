@@ -1,0 +1,10 @@
+# Terraform variables - copy to terraform.tfvars and configure
+
+project_id    = "your-gcp-project-id"
+region        = "us-central1"
+zone          = "us-central1-a"
+instance_name = "alfred-prod"
+machine_type  = "e2-standard-2"
+disk_size_gb  = 50
+environment   = "prod"
+use_static_ip = false
