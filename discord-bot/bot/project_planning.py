@@ -15,7 +15,7 @@ class ProjectPlanningCommands:
     """
     Discord commands for project planning.
 
-    Makes HTTP requests to the Project Planning API service.
+    Makes HTTP requests to the AI Core Service.
     """
 
     def __init__(self, bot, team_service, docs_service):
@@ -31,8 +31,8 @@ class ProjectPlanningCommands:
         self.team_service = team_service
         self.docs_service = docs_service
 
-        # Get planning API URL from env
-        self.api_url = os.getenv("PROJECT_PLANNING_API_URL", "http://localhost:8001")
+        # Get AI Core Service URL from env
+        self.api_url = os.getenv("AI_CORE_SERVICE_URL", "http://localhost:8001")
         self.planning_folder_id = os.getenv("GOOGLE_DRIVE_PROJECT_PLANNING_FOLDER_ID")
 
         # HTTP client for API calls

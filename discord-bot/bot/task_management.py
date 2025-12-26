@@ -1,11 +1,14 @@
 """Discord commands for ClickUp task management."""
 
 import logging
+import os
 from datetime import datetime
 from typing import Any, Dict, Optional
 
 import discord
 from discord import app_commands
+
+from bot.clients.task_client import TaskServiceClient
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +17,7 @@ class TaskManagementCommands:
     """
     Discord commands for task management.
 
-    Handles task details viewing and commenting with hooks for future rate limiting.
+    Calls task-service for all ClickUp operations.
     """
 
     def __init__(self, bot, team_service):
@@ -27,6 +30,9 @@ class TaskManagementCommands:
         """
         self.bot = bot
         self.team_service = team_service
+        self.task_client = TaskServiceClient(
+            base_url=os.getenv("TASK_SERVICE_URL", "http://localhost:8002")
+        )
 
         # Future: Add rate limiting here
         # self.rate_limiter = RateLimiter(max_calls=100, period=3600)  # 100 calls/hour
@@ -276,14 +282,11 @@ class TaskManagementCommands:
                     await interaction.followup.send(embed=error_embed, ephemeral=True)
                     return
 
-                # Import ClickUpService here to avoid circular imports
-                from bot.services import ClickUpService
-
-                clickup_service = ClickUpService(member.clickup_api_token)
-
-                # Fetch task details
+                # Fetch task details via service
                 logger.info(f"Fetching task details for {task_id}")
-                task = await clickup_service.get_task_details(task_id)
+                task = await self.task_client.get_task_details(
+                    task_id, member.clickup_api_token
+                )
 
                 if not task:
                     error_embed = discord.Embed(
@@ -298,9 +301,11 @@ class TaskManagementCommands:
                     await interaction.followup.send(embed=error_embed, ephemeral=True)
                     return
 
-                # Fetch comments
+                # Fetch comments via service
                 logger.info(f"Fetching comments for task {task_id}")
-                comments = await clickup_service.get_task_comments(task_id)
+                comments = await self.task_client.get_task_comments(
+                    task_id, member.clickup_api_token
+                )
 
                 # Create and send embed
                 embed = self._format_task_embed(task, comments)
@@ -390,20 +395,17 @@ class TaskManagementCommands:
                     await interaction.followup.send(embed=error_embed, ephemeral=True)
                     return
 
-                # Import ClickUpService here to avoid circular imports
-                from bot.services import ClickUpService
-
-                clickup_service = ClickUpService(member.clickup_api_token)
-
                 # Add Discord context to comment
                 discord_tag = f"\n\n_Posted from Discord by {interaction.user.mention}_"
                 full_comment = comment + discord_tag
 
-                # Post comment
+                # Post comment via service
                 logger.info(f"Posting comment to task {task_id}")
-                result = await clickup_service.post_task_comment(task_id, full_comment)
+                success = await self.task_client.add_task_comment(
+                    task_id, full_comment, member.clickup_api_token
+                )
 
-                if not result:
+                if not success:
                     error_embed = discord.Embed(
                         title="❌ Failed to Post Comment",
                         description=f"Could not post comment to task `{task_id}`\n\n"
@@ -436,7 +438,9 @@ class TaskManagementCommands:
                 )
 
                 # Get task details to show link
-                task = await clickup_service.get_task_details(task_id)
+                task = await self.task_client.get_task_details(
+                    task_id, member.clickup_api_token
+                )
                 if task and task.get("url"):
                     success_embed.add_field(
                         name="View Task",

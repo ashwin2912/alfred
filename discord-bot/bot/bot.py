@@ -567,9 +567,17 @@ async def my_tasks(interaction: discord.Interaction):
                 f"Filtering tasks for {discord_username} by {len(list_ids)} project lists for user team {member.team}"
             )
 
-    # Fetch tasks from ClickUp (filtered by team lists if configured)
-    clickup_service = ClickUpService(member.clickup_api_token)
-    tasks = await clickup_service.get_all_tasks(assigned_only=True, list_ids=list_ids)
+    # Fetch tasks from task-service
+    import os
+
+    from bot.clients.task_client import TaskServiceClient
+
+    task_client = TaskServiceClient(
+        base_url=os.getenv("TASK_SERVICE_URL", "http://localhost:8002")
+    )
+
+    result = await task_client.get_user_tasks(str(interaction.user.id))
+    tasks = result.get("tasks", []) if result else []
 
     if not tasks:
         embed = discord.Embed(
