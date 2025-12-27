@@ -3373,6 +3373,219 @@ GOOGLE_MAIN_ROSTER_SHEET_ID=your_main_roster_spreadsheet_id_here
 
 ---
 
+## Latest Update - Dec 27, 2024 ✨
+
+### **Phase 9: Production Deployment & CI/CD** ✅ COMPLETE
+
+#### What Was Built
+
+**1. Microservices Architecture Refinement**
+- Separated `ai-core-service`, `task-service`, and `discord-bot` into independent services
+- Shared services pattern with `data-service` and `docs-service`
+- Docker Compose orchestration for local and production environments
+
+**2. Production Deployment to GCP**
+- Deployed to Google Cloud Platform VM (alfred-prod)
+- Docker-based deployment with health checks
+- Automated restart policies for service reliability
+- Volume mounts for Google credentials
+- Network configuration for external access
+
+**3. GitHub Actions CI/CD Pipeline**
+- Automated deployment on push to `main` branch
+- Service account authentication with GCP
+- SSH-based deployment to production VM
+- Health check verification after deployment
+- Rollback capability via git history
+
+**4. Documentation Overhaul**
+- Complete README.md rewrite with current architecture
+- Database setup guide (`docs/DATABASE_SETUP.md`)
+- Monitoring and troubleshooting guide (`docs/MONITORING.md`)
+- CI/CD setup instructions (`docs/CI_CD_SETUP.md`)
+- Manual deployment guide updated
+
+**5. Bug Fixes & Improvements**
+- Fixed `/my-tasks` to filter by team based on channel context
+- Fixed `/list-project-lists` to auto-detect team from channel
+- Renamed `/brainstorm` to `/create-project` with Team Lead permissions
+- Added team-specific Manager role support (e.g., "Engineering Manager")
+- Fixed Docker build issues with `uv.lock` files
+- Resolved file permissions for git operations in CI/CD
+
+**6. Permission System Updates**
+- Team Leads can now use `/create-project`
+- Team-specific Manager Discord roles recognized
+- Channel-based permission checks for team commands
+- Fallback to Manage Channels permission for admins
+
+#### Files Modified
+```
+.github/workflows/deploy.yml          # New - GitHub Actions workflow
+deployment/deploy.sh                  # Updated - Production deploy script
+docker-compose.yml                    # Updated - Removed version, added volumes
+*/Dockerfile                          # Updated - Fixed paths for monorepo
+README.md                             # Complete rewrite
+docs/DATABASE_SETUP.md               # New - Database guide
+docs/MONITORING.md                   # New - Operations guide
+docs/CI_CD_SETUP.md                  # New - Deployment automation
+discord-bot/bot/bot.py               # Updated - /my-tasks filtering
+discord-bot/bot/admin_commands.py    # Updated - /list-project-lists auto-detect
+discord-bot/bot/project_planning.py  # Updated - /brainstorm → /create-project
+discord-bot/bot/clients/task_client.py  # Updated - list_ids parameter
+task-service/api/app.py              # Updated - Support list_ids filtering
+```
+
+#### Deployment Architecture
+```
+Local Development:
+├── run-local.sh → Starts all services with uv
+├── Services run on localhost:8001, :8002
+└── Discord bot connects to local services
+
+Production (GCP):
+├── VM: alfred-prod (e2-standard-2, Ubuntu 22.04)
+├── Docker Compose orchestration
+├── Health checks on :8001/health, :8002/health
+├── GitHub Actions auto-deploy on git push
+└── Monitoring via docker compose logs
+```
+
+#### CI/CD Workflow
+```
+Developer → git push → GitHub Actions
+                           ↓
+                    Authenticate with GCP
+                           ↓
+                    SSH into alfred-prod
+                           ↓
+                    git pull latest code
+                           ↓
+                 docker compose build & restart
+                           ↓
+                    Health check verification
+                           ↓
+                      Deployment complete
+```
+
+#### Current Status
+- ✅ Production deployment live on GCP
+- ✅ CI/CD pipeline operational
+- ✅ All services healthy and monitored
+- ✅ Team Lead permissions working
+- ✅ Channel-based filtering active
+- ✅ Documentation complete and organized
+
+---
+
+## What We Can Build Next 🚀
+
+### **Phase 10: Google Calendar Meeting Integration** ⬅️ NEXT (Dec 28-30, 2024)
+
+#### Feature: `/schedule-meeting` Command
+
+**Goal**: Create Google Calendar meetings directly from Discord with automatic team member invites.
+
+**User Flow**:
+```
+Team Lead: /schedule-meeting
+    ↓
+Discord Modal appears:
+  - Meeting title
+  - Description
+  - Date & Time
+  - Duration
+  - Attendees (auto-suggests team members)
+    ↓
+Bot creates Google Calendar event
+    ↓
+Invites sent to all team members
+    ↓
+Meeting link posted in Discord channel
+```
+
+**Technical Requirements**:
+
+1. **Google Calendar API Integration**
+   - Add Calendar API to service account scopes
+   - Calendar event creation with Google Meet link
+   - Attendee management
+   - Timezone handling
+
+2. **Discord Commands** (`discord-bot/bot/calendar_commands.py`)
+   ```python
+   /schedule-meeting           # Create team meeting
+   /my-meetings                # View upcoming meetings
+   /cancel-meeting <event_id>  # Cancel meeting (organizer only)
+   /meeting-details <event_id> # View meeting info
+   ```
+
+3. **Database Schema** (New table)
+   ```sql
+   CREATE TABLE calendar_events (
+     id UUID PRIMARY KEY,
+     google_event_id TEXT UNIQUE NOT NULL,
+     team_name TEXT NOT NULL,
+     title TEXT NOT NULL,
+     description TEXT,
+     start_time TIMESTAMP WITH TIME ZONE NOT NULL,
+     end_time TIMESTAMP WITH TIME ZONE NOT NULL,
+     meet_link TEXT,
+     created_by TEXT NOT NULL, -- Discord ID
+     discord_message_id BIGINT, -- Reference to announcement
+     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+   );
+   
+   CREATE TABLE meeting_attendees (
+     id UUID PRIMARY KEY,
+     event_id UUID REFERENCES calendar_events(id) ON DELETE CASCADE,
+     member_id UUID REFERENCES team_members(id),
+     status TEXT DEFAULT 'pending', -- pending, accepted, declined
+     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+   );
+   ```
+
+4. **Calendar Service** (`shared-services/calendar-service/`)
+   ```python
+   class GoogleCalendarService:
+       async def create_event(self, title, description, start, end, attendees)
+       async def get_upcoming_events(self, calendar_id, team_members)
+       async def cancel_event(self, event_id)
+       async def update_event(self, event_id, updates)
+       async def get_event_details(self, event_id)
+   ```
+
+5. **Features**:
+   - Auto-generate Google Meet link for each meeting
+   - Send calendar invites to team members via email
+   - Post meeting details in Discord channel with React buttons (Accept/Decline)
+   - Sync RSVP status from Google Calendar to Discord
+   - Reminder notifications 15 minutes before meeting
+   - Recurring meeting support
+   - Team calendar view (weekly/monthly)
+
+6. **Permission Model**:
+   - Team Leads: Can create meetings for their team
+   - Team Members: Can view team meetings and RSVP
+   - Admins: Can create org-wide meetings
+
+**Implementation Steps**:
+1. Add Google Calendar API to existing Google service account
+2. Create `calendar-service` in shared-services
+3. Add calendar commands to Discord bot
+4. Create database tables and migrations
+5. Build meeting notification system
+6. Add React-based RSVP interface
+7. Test with team meetings
+
+**Success Metrics**:
+- Team meetings created via Discord: > 80%
+- RSVP response rate: > 90%
+- Meeting link accessibility: 100%
+- Average time to schedule: < 30 seconds
+
+---
+
 ## Latest Update - Dec 14, 2024 (Part 6) ✨
 
 ### **Phase 8: Production Readiness - Code & Database Analysis** ✅ COMPLETE

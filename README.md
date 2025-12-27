@@ -1,85 +1,149 @@
 # Alfred
 
-Automated team onboarding and management system for Discord-first organizations.
+Discord-based team management system with AI-powered project planning and automated onboarding.
 
 ---
 
 ## What It Does
 
-Alfred automates the complete member onboarding process:
-
-1. User submits onboarding form in Discord
-2. Admin approves with team selection
-3. System automatically creates:
-   - Supabase authentication account
-   - Database record with profile data
-   - Google Doc profile document
-   - Team roster entry in Google Sheets
-   - Discord role assignment
-   - Welcome notification
-
-Time: 5 minutes manual → 10 seconds automated
-
----
-
-## Core Features
-
-### Discord Bot
-- Modal-based onboarding with admin approval
-- Automatic Supabase user creation with secure passwords
-- Google Doc profile generation
-- Team roster updates in Google Sheets
-- Discord role auto-assignment
-- ClickUp task integration (`/my-tasks`, `/task-info`, `/task-comment`)
-- Team management (`/create-team`, `/add-to-team`, `/list-teams`)
-- Project list tracking (`/add-project-list`, `/list-project-lists`)
-- Team task reports (`/team-report`)
-- AI-powered project planning (`/brainstorm`, `/publish-project`)
-- ClickUp publisher with hierarchical task structure
-
-### Project Planning System
-- AI-powered project breakdown (Claude Haiku 4.5)
-- Google Docs plan generation with editing instructions
-- ClickUp publisher with hierarchical tasks (phases as parents, subtasks as children)
-- Multi-list support for teams
-- Channel-based permission system
-
-### Shared Services
-- `data-service`: Supabase database and authentication API
-- `docs-service`: Google Docs, Drive, and Sheets integration
-- Type-safe models with Pydantic
+- **Team Onboarding**: Automated Discord member onboarding with admin approval
+- **Task Management**: View and manage ClickUp tasks directly from Discord
+- **Project Planning**: AI-powered project breakdown and Google Docs generation
+- **Team Management**: Create teams, assign members, track project lists
 
 ---
 
 ## Quick Start
 
 ### Prerequisites
-- Python 3.11+
 - Discord bot token
-- Supabase project
-- Google Cloud service account with domain-wide delegation
-- Google Workspace account
+- Supabase project (PostgreSQL + Auth)
+- Google Cloud service account with Docs/Drive/Sheets API access
+- Anthropic API key (for AI features)
+- ClickUp workspace (optional, for task management)
 
-### Setup
+### Local Setup
 
-```bash
-# Install dependencies
-cd discord-bot
-source .venv/bin/activate
-uv pip install -e .
+1. **Clone and install dependencies**
+   ```bash
+   git clone https://github.com/your-username/alfred.git
+   cd alfred
+   
+   # Install uv package manager
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   
+   # Sync dependencies for each service
+   cd ai-core-service && uv sync && cd ..
+   cd task-service && uv sync && cd ..
+   cd discord-bot && uv sync && cd ..
+   ```
 
-# Configure environment
-cp .env.example .env
-# Edit .env with your credentials
+2. **Configure environment**
+   ```bash
+   cp .env.example .env
+   nano .env
+   ```
+   
+   Fill in:
+   ```bash
+   # Database
+   SUPABASE_URL=https://your-project.supabase.co
+   SUPABASE_SERVICE_KEY=your_service_key
+   
+   # AI
+   ANTHROPIC_API_KEY=sk-ant-your-key
+   
+   # Google (optional)
+   GOOGLE_CREDENTIALS_PATH=/path/to/service-account.json
+   GOOGLE_DRIVE_FOLDER_ID=your_folder_id
+   
+   # Discord
+   DISCORD_BOT_TOKEN=your_bot_token
+   
+   # ClickUp (optional)
+   # Users configure their own tokens via /setup-clickup
+   ```
 
-# Run interactive setup
-python scripts/interactive_setup.py
+3. **Run locally**
+   ```bash
+   # Start all services
+   ./run-local.sh
+   
+   # Or run individually
+   cd ai-core-service && uv run uvicorn api.app:app --port 8001
+   cd task-service && uv run uvicorn api.app:app --port 8002
+   cd discord-bot && uv run python -m bot.bot
+   ```
 
-# Start bot
-./run.sh
-```
+4. **Test in Discord**
+   ```
+   /setup - Check onboarding status
+   /my-tasks - View your ClickUp tasks
+   /create-project - Generate AI project plan (Team Leads only)
+   ```
 
-Test with `/start-onboarding` in Discord.
+---
+
+## Production Deployment (GCP)
+
+### One-Time Setup
+
+1. **Create GCP VM**
+   ```bash
+   gcloud compute instances create alfred-prod \
+     --zone=us-central1-a \
+     --machine-type=e2-standard-2 \
+     --image-family=ubuntu-2204-lts \
+     --image-project=ubuntu-os-cloud \
+     --tags=alfred-prod
+   ```
+
+2. **Configure firewall**
+   ```bash
+   gcloud compute firewall-rules create alfred-services \
+     --direction=INGRESS \
+     --action=allow \
+     --rules=tcp:8001,tcp:8002 \
+     --target-tags=alfred-prod
+   ```
+
+3. **SSH and setup**
+   ```bash
+   gcloud compute ssh alfred-prod --zone=us-central1-a
+   
+   # Install Docker
+   curl -fsSL https://get.docker.com -o get-docker.sh
+   sudo sh get-docker.sh
+   sudo usermod -aG docker $USER
+   
+   # Clone repo
+   git clone https://github.com/your-username/alfred.git /opt/alfred
+   cd /opt/alfred
+   
+   # Configure .env
+   cp .env.example .env
+   nano .env
+   
+   # Upload Google credentials (from local machine)
+   exit
+   gcloud compute scp /path/to/service-account.json alfred-prod:/opt/alfred/credentials/service-account.json --zone=us-central1-a
+   ```
+
+4. **Deploy with Docker**
+   ```bash
+   gcloud compute ssh alfred-prod --zone=us-central1-a
+   cd /opt/alfred
+   docker compose up -d
+   ```
+
+### GitHub Actions CI/CD
+
+See [`docs/CI_CD_SETUP.md`](docs/CI_CD_SETUP.md) for automated deployments on push to `main`.
+
+**TL;DR:**
+1. Create GCP service account with compute permissions
+2. Add `GCP_SA_KEY` and `GCP_PROJECT_ID` to GitHub Secrets
+3. Push to `main` → auto-deploys
 
 ---
 
@@ -87,88 +151,95 @@ Test with `/start-onboarding` in Discord.
 
 ```
 alfred/
-├── discord-bot/              # Primary onboarding system
-│   ├── bot/                  # Bot commands and logic
-│   └── scripts/              # Setup and utility scripts
+├── ai-core-service/          # AI project planning (Claude)
+│   ├── ai/                   # Brainstorming logic
+│   ├── api/                  # FastAPI endpoints
+│   └── services/             # Doc generation
+├── task-service/             # ClickUp integration
+│   ├── api/                  # Task endpoints
+│   └── services/             # ClickUp client
+├── discord-bot/              # Discord interface
+│   └── bot/                  # Commands and onboarding
 ├── shared-services/
-│   ├── data-service/         # Database and auth API
-│   ├── docs-service/         # Google integrations
-│   └── database/migrations/  # Database schema
-└── team-management-system/   # ClickUp automation
+│   ├── data-service/         # Supabase client
+│   └── docs-service/         # Google APIs
+└── deployment/               # Deploy scripts
+```
+
+**Data Flow:**
+```
+Discord → Bot → Task Service → ClickUp API
+                  ↓
+            Data Service → Supabase
+                  ↓
+         AI Core Service → Claude → Google Docs
 ```
 
 ---
 
-## Database Integrity
+## Key Commands
 
-Migration 011-014 add critical data integrity features:
+### Team Leads
+- `/create-project <idea>` - Generate AI project plan
+- `/publish-project <doc_url>` - Publish plan to ClickUp
+- `/team-report` - View team's task status
 
-- NOT NULL constraints on required fields
-- Email format validation with auto-normalization
-- Phone number validation and formatting
-- CASCADE delete behaviors to prevent orphaned records
+### Team Members
+- `/setup` - Check onboarding status
+- `/setup-clickup <token>` - Connect ClickUp account
+- `/my-tasks` - View your tasks (filtered by team/channel)
 
-Apply with:
-```bash
-python apply_data_integrity_migrations.py
-```
-
-See `DATA_INTEGRITY_MIGRATIONS.md` for details.
-
----
-
-## Documentation
-
-- `progress.md`: Complete feature list and roadmap
-- `DATABASE_IMPROVEMENTS.md`: Database optimization recommendations
-- `IMPROVEMENTS_NEEDED.md`: Code quality improvements
-- `GCP_DEPLOYMENT.md`: Production deployment guide
-- `DATA_INTEGRITY_MIGRATIONS.md`: Migration guide
-
----
-
-## Metrics
-
-| Metric | Before | After | Improvement |
-|--------|--------|-------|-------------|
-| Onboarding Time | 5 min | 10 sec | 30x faster |
-| Setup Time | 45 min | 2 min | 22x faster |
-| Automation Rate | 20% | 95% | +75% |
-| Manual Steps | 6 | 1 | -83% |
+### Admins
+- `/create-team` - Create new team
+- `/add-project-list` - Add ClickUp list to team
+- `/list-project-lists` - View team's lists
 
 ---
 
 ## Tech Stack
 
-- Discord Bot: discord.py
-- Database: Supabase (PostgreSQL)
-- Authentication: Supabase Auth API
-- Documents: Google Docs/Drive/Sheets APIs
-- Task Management: ClickUp API
-- AI: Anthropic Claude
-- Language: Python 3.11+
-- Type Safety: Pydantic
+- **Framework**: FastAPI (services), discord.py (bot)
+- **Database**: Supabase (PostgreSQL + Auth)
+- **AI**: Anthropic Claude 4.5
+- **Documents**: Google Docs/Drive/Sheets APIs
+- **Tasks**: ClickUp API
+- **Deployment**: Docker Compose, GitHub Actions
+- **Language**: Python 3.11+
+- **Package Manager**: uv
 
 ---
 
-## Testing
+## Documentation
 
-```bash
-# Clean environment
-python scripts/cleanup_everything.py
+### Setup & Deployment
+- [`docs/DATABASE_SETUP.md`](docs/DATABASE_SETUP.md) - Database schema and setup
+- [`docs/MANUAL_DEPLOYMENT.md`](docs/MANUAL_DEPLOYMENT.md) - Step-by-step GCP setup
+- [`docs/CI_CD_SETUP.md`](docs/CI_CD_SETUP.md) - GitHub Actions automation
 
-# Setup teams
-python scripts/interactive_setup.py
+### Operations
+- [`docs/MONITORING.md`](docs/MONITORING.md) - Health checks and troubleshooting
 
-# Start bot
-./run.sh
-
-# Test in Discord
-/start-onboarding
-```
+### Features
+- [`docs/SIMPLIFIED_ONBOARDING_FLOW.md`](docs/SIMPLIFIED_ONBOARDING_FLOW.md) - Onboarding process
+- [`docs/ACTION_REQUEST_SYSTEM_PLAN.md`](docs/ACTION_REQUEST_SYSTEM_PLAN.md) - Action system design
 
 ---
 
-**Last Updated**: Dec 21, 2024  
-**Status**: Production-ready with ClickUp Publisher  
-**Version**: 1.4.0
+## Contributing
+
+1. Create feature branch
+2. Make changes
+3. Test locally with `./run-local.sh`
+4. Push - CI/CD auto-deploys to production
+
+---
+
+## License
+
+MIT
+
+---
+
+**Status**: Production  
+**Version**: 2.0.0  
+**Last Updated**: Dec 27, 2024
