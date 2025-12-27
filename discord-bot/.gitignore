@@ -45,4 +45,3 @@ logs/
 Thumbs.db
 
 # UV lock files
-uv.lock

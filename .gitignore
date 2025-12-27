@@ -232,6 +232,3 @@ credentials.json
 # Google credentials
 **/creds/*.json
 !**/creds/.gitkeep
-
-# UV lock files
-uv.lock
