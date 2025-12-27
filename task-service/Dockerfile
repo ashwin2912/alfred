@@ -6,18 +6,19 @@ WORKDIR /app
 RUN pip install uv
 
 # Copy project files
-COPY pyproject.toml ./
-COPY api ./api
-COPY services ./services
+COPY task-service/pyproject.toml ./
+COPY task-service/uv.lock ./
+COPY task-service/api ./api
+COPY task-service/services ./services
 
 # Copy shared services
-COPY --from=shared-services /shared-services /shared-services
+COPY shared-services /shared-services
 
 # Install dependencies
-RUN uv pip install --system -e .
+RUN uv sync --frozen
 
 # Expose port
 EXPOSE 8002
 
 # Run service
-CMD ["uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8002"]
+CMD ["uv", "run", "uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8002"]

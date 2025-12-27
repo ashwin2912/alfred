@@ -11,7 +11,11 @@ dependencies = [
     "pydantic[email]>=2.0.0",
     "python-dotenv>=1.0.0",
     "supabase>=2.0.0",
+    "data-service",
 ]
+
+[tool.uv.sources]
+data-service = { path = "../shared-services/data-service", editable = true }
 
 [build-system]
 requires = ["hatchling"]

@@ -15,6 +15,7 @@ sys.path.insert(
 )
 
 from data_service.client import create_data_service
+
 from services.clickup_client import ClickUpClient
 
 from .models import (
@@ -63,8 +64,8 @@ async def health_check():
 
 
 @app.get("/tasks/user/{discord_user_id}", response_model=UserTasksResponse)
-async def get_user_tasks(discord_user_id: str):
-    """Get all tasks for a user."""
+async def get_user_tasks(discord_user_id: str, list_ids: str = None):
+    """Get all tasks for a user, optionally filtered by comma-separated list IDs."""
     # Get user from database
     result = (
         data_service.client.table("team_members")
@@ -82,22 +83,28 @@ async def get_user_tasks(discord_user_id: str):
     if not clickup_token:
         raise HTTPException(status_code=400, detail="ClickUp token not configured")
 
-    # Get user's team lists
-    team_name = member.get("team")
-    list_ids = None
-    if team_name:
-        lists_result = (
-            data_service.client.table("project_lists")
-            .select("clickup_list_id")
-            .eq("team_name", team_name)
-            .execute()
-        )
-        if lists_result.data:
-            list_ids = [item["clickup_list_id"] for item in lists_result.data]
+    # Parse list_ids from query parameter if provided
+    filter_list_ids = None
+    if list_ids:
+        filter_list_ids = [lid.strip() for lid in list_ids.split(",") if lid.strip()]
+    else:
+        # Get user's team lists as fallback
+        team_name = member.get("team")
+        if team_name:
+            lists_result = (
+                data_service.client.table("project_lists")
+                .select("clickup_list_id")
+                .eq("team_name", team_name)
+                .execute()
+            )
+            if lists_result.data:
+                filter_list_ids = [
+                    item["clickup_list_id"] for item in lists_result.data
+                ]
 
     # Fetch tasks from ClickUp
     client = ClickUpClient(clickup_token)
-    tasks = await client.get_user_tasks(list_ids=list_ids)
+    tasks = await client.get_user_tasks(list_ids=filter_list_ids)
 
     return UserTasksResponse(
         tasks=[TaskResponse(**task) for task in tasks], total_count=len(tasks)
