@@ -15,7 +15,7 @@ fi
 
 # Sync dependencies with uv
 echo "📦 Syncing dependencies with uv..."
-uv pip install -e .
+uv sync
 
 # Check for required environment variables
 if [ -z "$ANTHROPIC_API_KEY" ]; then
@@ -32,4 +32,4 @@ fi
 
 # Start the API server
 echo "Starting server on http://0.0.0.0:8001"
-python -m api.app
+uv run python -m api.app
