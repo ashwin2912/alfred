@@ -29,9 +29,6 @@ jobs:
           GCP_VM_NAME: alfred-prod
           GCP_ZONE: us-central1-a
         run: |
-          # Copy deployment script to VM
-          gcloud compute scp deployment/deploy.sh ${GCP_VM_NAME}:~/deployment/deploy.sh --zone=${GCP_ZONE}
-
           # SSH and run deployment
           gcloud compute ssh ${GCP_VM_NAME} --zone=${GCP_ZONE} --command="
             cd ~/alfred && \
