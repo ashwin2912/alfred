@@ -15,10 +15,10 @@ fi
 # Pull latest changes if git repo
 if [ -d .git ]; then
     echo "📥 Pulling latest changes..."
-    # Discard local changes and pull
+    # Discard local changes and pull (preserve credentials)
     git fetch origin
     git reset --hard origin/main
-    git clean -fd
+    git clean -fd -e credentials -e .env
 fi
 
 # Build and start services
