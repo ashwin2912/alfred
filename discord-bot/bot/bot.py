@@ -576,7 +576,9 @@ async def my_tasks(interaction: discord.Interaction):
         base_url=os.getenv("TASK_SERVICE_URL", "http://localhost:8002")
     )
 
-    result = await task_client.get_user_tasks(str(interaction.user.id))
+    result = await task_client.get_user_tasks(
+        str(interaction.user.id), list_ids=list_ids
+    )
     tasks = result.get("tasks", []) if result else []
 
     if not tasks:

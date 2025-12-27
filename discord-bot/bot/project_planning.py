@@ -71,12 +71,7 @@ class ProjectPlanningCommands:
         if not member:
             return None
 
-        # Check if user has Manage Channels permission in current channel
-        permissions = interaction.channel.permissions_for(member)
-        if not permissions.manage_channels:
-            return None
-
-        # Get all teams from database
+        # Get all teams from database first to check team membership
         try:
             teams_response = (
                 self.team_service.data_service.client.table("teams")
@@ -104,9 +99,37 @@ class ProjectPlanningCommands:
             if not team_name or not team_folder_id:
                 return None
 
+            # Check if user is a team lead for this team OR has Manage Channels permission
+            discord_username = (
+                f"{interaction.user.name}#{interaction.user.discriminator}"
+            )
+            if interaction.user.discriminator == "0":
+                discord_username = interaction.user.name
+
+            # Check if user is team lead or has Manager role in Discord
+            member_data = self.team_service.get_member_by_discord(discord_username)
+            is_team_lead = (
+                member_data
+                and member_data.team == team_name
+                and member_data.role == "Team Lead"
+            )
+
+            # Check if user has team-specific Manager role (e.g. "Engineering Manager")
+            manager_role_name = f"{team_name} Manager".lower()
+            has_manager_role = any(
+                role.name.lower() == manager_role_name for role in member.roles
+            )
+
+            # Check if user has Manage Channels permission (fallback for admins)
+            permissions = interaction.channel.permissions_for(member)
+            has_manage_channels = permissions.manage_channels
+
+            if not is_team_lead and not has_manager_role and not has_manage_channels:
+                return None
+
             return {
                 "team_name": team_name,
-                "role_name": f"{team_name} Manager",
+                "role_name": f"{team_name} {'Lead' if is_team_lead else 'Manager'}",
                 "folder_id": team_folder_id,
             }
 
@@ -115,11 +138,11 @@ class ProjectPlanningCommands:
             return None
 
     def _brainstorm_command(self) -> app_commands.Command:
-        """Create the /brainstorm command."""
+        """Create the /create-project command."""
 
         @app_commands.command(
-            name="brainstorm",
-            description="[Team Channel Manager] Generate an AI-powered project plan from your idea",
+            name="create-project",
+            description="[Team Lead] Generate an AI-powered project plan from your idea",
         )
         @app_commands.describe(
             project_idea="Describe your project idea (be as detailed as possible)"
@@ -135,14 +158,14 @@ class ProjectPlanningCommands:
             - Risk assessment
             - A formatted Google Doc with the full plan
 
-            **Access:** Must be run in a team channel with Manage Channels permission
+            **Access:** Must be run in a team channel by a Team Lead
             **Document Location:** Your team's Google Drive folder
             """
             await interaction.response.defer(ephemeral=True)
 
             try:
                 logger.info(
-                    f"Brainstorm command called by {interaction.user} in {interaction.channel.name}"
+                    f"Create project command called by {interaction.user} in {interaction.channel.name}"
                 )
 
                 # Check if user can manage current channel (team permission)
@@ -153,8 +176,8 @@ class ProjectPlanningCommands:
                         description=(
                             "This command requires:\n\n"
                             "1. Run in a team channel (#engineering-*, #product-*, #business-*)\n"
-                            "2. You must have **Manage Channels** permission in this channel\n\n"
-                            "Only team managers can create project plans."
+                            "2. You must be a **Team Lead** for this team\n\n"
+                            "Only team leads can create project plans."
                         ),
                         color=discord.Color.red(),
                     )

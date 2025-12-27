@@ -284,6 +284,18 @@ class AdminCommands:
                     await interaction.followup.send(embed=error_embed, ephemeral=True)
                     return
 
+                # If no team_name provided, detect team from channel
+                if not team_name and interaction.channel:
+                    teams = self.team_service.data_service.list_teams()
+                    for team in teams:
+                        if (
+                            team.discord_general_channel_id == interaction.channel.id
+                            or team.discord_standup_channel_id == interaction.channel.id
+                        ):
+                            team_name = team.name
+                            logger.info(f"Auto-detected team {team_name} from channel")
+                            break
+
                 logger.info(
                     f"List project lists called by {interaction.user} for team {team_name}"
                 )

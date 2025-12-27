@@ -15,11 +15,17 @@ class TaskServiceClient:
         self.base_url = base_url
         self.client = httpx.AsyncClient(timeout=30.0)
 
-    async def get_user_tasks(self, discord_user_id: str) -> Optional[Dict[str, Any]]:
-        """Get all tasks for a user."""
+    async def get_user_tasks(
+        self, discord_user_id: str, list_ids: Optional[List[str]] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Get all tasks for a user, optionally filtered by list IDs."""
         try:
+            params = {}
+            if list_ids:
+                params["list_ids"] = ",".join(list_ids)
+
             response = await self.client.get(
-                f"{self.base_url}/tasks/user/{discord_user_id}"
+                f"{self.base_url}/tasks/user/{discord_user_id}", params=params
             )
             if response.status_code == 200:
                 return response.json()

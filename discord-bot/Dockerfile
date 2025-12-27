@@ -6,15 +6,16 @@ WORKDIR /app
 RUN pip install uv
 
 # Copy project files
-COPY pyproject.toml ./
-COPY bot ./bot
-COPY scripts ./scripts
+COPY discord-bot/pyproject.toml ./
+COPY discord-bot/uv.lock ./
+COPY discord-bot/bot ./bot
+COPY discord-bot/scripts ./scripts
 
 # Copy shared services
-COPY --from=shared-services /shared-services /shared-services
+COPY shared-services /shared-services
 
 # Install dependencies
-RUN uv pip install --system -e .
+RUN uv sync --frozen
 
 # Run bot
-CMD ["python", "-m", "bot.main"]
+CMD ["uv", "run", "python", "-m", "bot.bot"]
