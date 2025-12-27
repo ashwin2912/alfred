@@ -29,7 +29,7 @@ jobs:
           GCP_VM_NAME: alfred-prod
           GCP_ZONE: us-central1-a
         run: |
-          gcloud compute ssh ${GCP_VM_NAME} --zone=${GCP_ZONE} --command="cd /home/ashwindhanasamy/alfred && git pull origin main && chmod +x deployment/deploy.sh && ./deployment/deploy.sh"
+          gcloud compute ssh ${GCP_VM_NAME} --zone=${GCP_ZONE} --command="cd /opt/alfred && git pull origin main && chmod +x deployment/deploy.sh && ./deployment/deploy.sh"
 
       - name: Verify deployment
         env:
