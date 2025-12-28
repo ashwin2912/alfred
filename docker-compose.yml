@@ -9,7 +9,7 @@ services:
       - .env
     restart: unless-stopped
     volumes:
-      - ./shared-services/docs-service/creds:/app/creds
+      - ./credentials:/app/credentials
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 30s
