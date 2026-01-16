@@ -30,8 +30,15 @@ jobs:
           GCP_ZONE: us-central1-a
           GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
         run: |
-          gcloud compute ssh ${GCP_VM_NAME} --zone=${GCP_ZONE} --command="cd /opt/alfred && git config --global --add safe.directory /opt/alfred && git fetch origin && git reset --hard origin/main && git clean -fd -e credentials -e .env && chmod +x deployment/deploy.sh && ./deployment/deploy.sh"
-
+          gcloud compute ssh ${GCP_VM_NAME} --zone=${GCP_ZONE} --command="
+            sudo git config --global --add safe.directory /opt/alfred &&
+            cd /opt/alfred &&
+            sudo git fetch origin &&
+            sudo git reset --hard origin/main &&
+            sudo git clean -fd -e credentials -e .env &&
+            sudo chmod +x deployment/deploy.sh &&
+            sudo ./deployment/deploy.sh
+          "
       - name: Verify deployment
         env:
           GCP_VM_NAME: alfred-prod
