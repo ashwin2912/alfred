@@ -41,6 +41,8 @@ services:
       - ai-core-service
       - task-service
     restart: unless-stopped
+    volumes:
+      - ./credentials:/app/credentials:ro
     environment:
       - AI_CORE_SERVICE_URL=http://ai-core-service:8001
       - TASK_SERVICE_URL=http://task-service:8002
