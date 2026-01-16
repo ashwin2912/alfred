@@ -28,6 +28,7 @@ jobs:
         env:
           GCP_VM_NAME: alfred-prod
           GCP_ZONE: us-central1-a
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
         run: |
           gcloud compute ssh ${GCP_VM_NAME} --zone=${GCP_ZONE} --command="cd /opt/alfred && git fetch origin && git reset --hard origin/main && git clean -fd -e credentials && chmod +x deployment/deploy.sh && ./deployment/deploy.sh"
 
